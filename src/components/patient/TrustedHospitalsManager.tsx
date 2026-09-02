@@ -183,12 +183,33 @@ export const TrustedHospitalsManager: React.FC = () => {
 
       db.logAction(currentUser?.id || 'usr', currentUser?.fullName || 'Patient', 'PATIENT',
         'CONSENT_GRANTED', 'TrustedHospital', newTrusted.id,
-        `Patient added ${hospital.hospitalName} as Trusted Hospital`);
-      showToast('🟢 Trusted Hospital Added', `${hospital.hospitalName} added to emergency network with data consent.`, 'VERIFICATION');
+        `Patient registered with ${hospital.hospitalName} with Unique ID ${pId}`);
+      showToast('🟢 Registered with Hospital', `Your Unique ID ${pId} has been linked with ${hospital.hospitalName}.`, 'VERIFICATION');
+      
+      // Set registered hospital for modal display
+      setRegisteredHospitalSuccess({
+        hospitalName: hospital.hospitalName,
+        patientId: pId,
+        address: hospital.address
+      });
     }
 
     refreshList();
     setLoadingId(null);
+  };
+
+  const [registeredHospitalSuccess, setRegisteredHospitalSuccess] = useState<{
+    hospitalName: string;
+    patientId: string;
+    address?: string;
+  } | null>(null);
+  const [copiedId, setCopiedId] = useState(false);
+
+  const handleCopyId = (idToCopy: string) => {
+    navigator.clipboard.writeText(idToCopy);
+    setCopiedId(true);
+    showToast('📋 Copied to Clipboard', `Patient Unique ID ${idToCopy} copied.`, 'INFO');
+    setTimeout(() => setCopiedId(false), 2000);
   };
 
   const handleRevoke = async (record: TrustedHospital) => {
@@ -224,9 +245,70 @@ export const TrustedHospitalsManager: React.FC = () => {
   };
 
   const activeCount = trustedList.filter(t => t.status === 'ACTIVE').length;
+  const currentUniquePatientId = patientProfile?.patientId || patientProfileId || patientId || 'MB-2026-7F42K9';
 
   return (
     <div className="space-y-6">
+      {/* ── Unique Patient ID Digital Health Card ─────────────────────────── */}
+      <div className="bg-gradient-to-r from-teal-900 via-slate-900 to-teal-950 text-white rounded-3xl p-6 sm:p-7 shadow-xl border border-teal-800/40 relative overflow-hidden">
+        {/* Glow decoration */}
+        <div className="absolute top-0 right-0 w-72 h-72 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
+        
+        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold tracking-wider uppercase px-2.5 py-0.5 rounded-full bg-teal-400/20 text-teal-300 border border-teal-400/30">
+                ABDM National Health Token
+              </span>
+              <span className="text-[10px] text-teal-200/80 font-medium">
+                MediBridge Unified Health ID
+              </span>
+            </div>
+            
+            <h3 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+              <span>{currentUser?.fullName || patientProfile?.fullName || 'Registered Patient'}</span>
+            </h3>
+            
+            <p className="text-xs text-slate-300 max-w-xl leading-relaxed">
+              When you visit or register with any hospital, present your <strong className="text-teal-300">Unique Patient ID</strong>. 
+              Hospital staff can verify this code in their portal to instantly load your complete medical profile, diagnostic records, allergies, and emergency history.
+            </p>
+          </div>
+
+          {/* Unique ID Badge */}
+          <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl flex flex-col items-center sm:items-end justify-center gap-2 w-full md:w-auto flex-shrink-0 shadow-lg">
+            <span className="text-[10px] uppercase font-bold text-teal-200 tracking-wider">Your Unique Patient ID</span>
+            <div className="flex items-center gap-2 bg-black/40 px-3.5 py-2 rounded-xl border border-teal-500/30">
+              <span className="font-mono text-base sm:text-lg font-black text-teal-300 tracking-wider">
+                {currentUniquePatientId}
+              </span>
+              <button
+                onClick={() => handleCopyId(currentUniquePatientId)}
+                className={`p-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                  copiedId ? 'bg-emerald-500 text-white' : 'bg-teal-600/60 hover:bg-teal-500 text-white'
+                }`}
+                title="Copy Patient Unique ID"
+              >
+                {copiedId ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Copy ID</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <span className="text-[10px] text-teal-100/70 font-mono">
+              Linked with {activeCount} Hospital{activeCount !== 1 ? 's' : ''}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* ── Top Header Banner ─────────────────────────────────────────────── */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -556,6 +638,82 @@ export const TrustedHospitalsManager: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* ── Registration Success & Unique ID Modal ──────────────────────── */}
+      {registeredHospitalSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-100 space-y-6 animate-scale-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-600 shadow-sm">
+                  <Building2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-slate-900 text-lg">
+                    Registration Confirmed!
+                  </h4>
+                  <p className="text-xs text-teal-700 font-bold">
+                    Linked with {registeredHospitalSuccess.hospitalName}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRegisteredHospitalSuccess(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-4 bg-teal-50 border border-teal-200 rounded-2xl space-y-2">
+              <span className="text-[11px] font-bold text-teal-900 uppercase tracking-wider block">
+                🏥 Your Hospital Verification Token
+              </span>
+              <p className="text-xs text-slate-600">
+                Share this Unique Patient ID when you arrive at <strong className="text-slate-900">{registeredHospitalSuccess.hospitalName}</strong>:
+              </p>
+              
+              <div className="flex items-center justify-between bg-white px-4 py-3 rounded-xl border border-teal-300 shadow-sm">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Patient Unique ID</span>
+                  <span className="font-mono text-lg font-black text-teal-800 tracking-wider">
+                    {registeredHospitalSuccess.patientId}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleCopyId(registeredHospitalSuccess.patientId)}
+                  className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-lg shadow transition flex items-center gap-1.5"
+                >
+                  {copiedId ? <Check className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+                  <span>{copiedId ? 'Copied!' : 'Copy ID'}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 text-xs text-slate-600 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <h5 className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-teal-600" />
+                What happens when the hospital verifies this ID?
+              </h5>
+              <ul className="space-y-1.5 pl-5 list-disc text-slate-600">
+                <li>Hospital doctors instantly receive your complete medical history and vitals.</li>
+                <li>All uploaded diagnostic lab reports &amp; X-rays are accessible.</li>
+                <li>Emergency allergy warnings and chronic conditions are highlighted.</li>
+                <li>Instant admission into the hospital's pre-arrival queue without paperwork.</li>
+              </ul>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                onClick={() => setRegisteredHospitalSuccess(null)}
+                className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-xl shadow-md shadow-teal-600/20 transition"
+              >
+                Got It, Thank You
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

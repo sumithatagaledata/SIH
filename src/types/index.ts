@@ -33,6 +33,10 @@ export interface PatientProfile {
   address: string;
   city: string;
   pincode: string;
+  fullName?: string;
+  allergies?: string[];
+  chronicConditions?: string[];
+  currentMedications?: string[];
 }
 
 export interface DoctorProfile {
