@@ -1,24 +1,26 @@
 import React, { useState } from 'react';
 import {
   ShieldAlert, TrendingUp, Building2, ShieldCheck,
-  Users, Settings
+  Users, Settings, Stethoscope
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { AnalyticsOverview } from '../../components/admin/AnalyticsOverview';
 import { HospitalManager } from '../../components/admin/HospitalManager';
 import { AuditLogViewer } from '../../components/admin/AuditLogViewer';
 import { SharedPatientsPanel } from '../../components/doctor/SharedPatientsPanel';
+import { HospitalPortalSuite } from '../../components/admin/HospitalPortalSuite';
 
 export const AdminDashboard: React.FC = () => {
   const { currentUser, hospitalAccount } = useAuth();
-  const [activeTab, setActiveTab] = useState<'shared_patients' | 'analytics' | 'hospitals' | 'audit' | 'settings'>(() => {
-    return hospitalAccount ? 'shared_patients' : 'analytics';
+  const [activeTab, setActiveTab] = useState<'portal_suite' | 'shared_patients' | 'analytics' | 'hospitals' | 'audit' | 'settings'>(() => {
+    return 'portal_suite';
   });
 
   const tabs = [
-    ...(hospitalAccount ? [{ id: 'shared_patients' as const, label: 'Shared Patients / Authorized Records', icon: Users }] : []),
+    { id: 'portal_suite' as const, label: '🏥 Hospital Operations Hub', icon: Building2 },
+    ...(hospitalAccount ? [{ id: 'shared_patients' as const, label: 'Shared Patients / ABDM Vault', icon: Users }] : []),
     { id: 'analytics' as const, label: 'Analytics & Intake Metrics', icon: TrendingUp },
-    { id: 'hospitals' as const, label: 'Connected Hospitals & ER Beds', icon: Building2 },
+    { id: 'hospitals' as const, label: 'Network Hospitals & Beds', icon: Stethoscope },
     { id: 'audit' as const, label: 'Immutable Audit Trail', icon: ShieldCheck },
     { id: 'settings' as const, label: 'System Configuration', icon: Settings },
   ];
@@ -28,18 +30,18 @@ export const AdminDashboard: React.FC = () => {
       {/* Admin Header */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-purple-50 border border-purple-200 flex items-center justify-center text-purple-600 font-extrabold text-xl shadow-sm">
-            <ShieldAlert className="w-8 h-8" />
+          <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-extrabold text-xl shadow-sm">
+            <Building2 className="w-8 h-8" />
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-black text-slate-900">{currentUser?.fullName || 'System Administrator'}</h2>
-              <span className="text-xs bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-0.5 rounded-full font-mono font-bold">
-                Platform Administrator
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900">{currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Administrator'}</h2>
+              <span className="text-xs bg-teal-50 text-teal-800 border border-teal-200 px-2.5 py-0.5 rounded-full font-mono font-bold">
+                {hospitalAccount ? 'Hospital Operations & Admin' : 'Platform Administrator'}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              MediBridge AI Governance Portal • ABDM Health Facility Registry (HFR) Ready
+              MediBridge Clinical Hospital Portal • ABDM Health Facility Registry (HFR) &amp; Live Emergency Network
             </p>
           </div>
         </div>
@@ -56,7 +58,7 @@ export const AdminDashboard: React.FC = () => {
               onClick={() => setActiveTab(t.id)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
                 isActive
-                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
+                  ? 'bg-teal-700 text-white shadow-md shadow-teal-700/20'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
               }`}
             >
@@ -69,6 +71,7 @@ export const AdminDashboard: React.FC = () => {
 
       {/* Tab Panels */}
       <div>
+        {activeTab === 'portal_suite' && <HospitalPortalSuite />}
         {activeTab === 'shared_patients' && (
           <SharedPatientsPanel hospitalAccountId={hospitalAccount?.id || 'hacct-001'} />
         )}
