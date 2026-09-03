@@ -85,12 +85,50 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate }) => {
           </div>
 
           {/* Desktop Navigation Links */}
-          <div className="hidden lg:flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200">
+          <div className="hidden lg:flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-xl border border-slate-200">
             <button
-              onClick={handleDashboardNavigate}
-              className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-teal-600 text-white shadow-sm hover:bg-teal-700 transition"
+              onClick={() => {
+                switchRole('PATIENT');
+                onNavigate('patient-dashboard');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                currentPage === 'patient-dashboard'
+                  ? 'bg-teal-600 text-white shadow-sm'
+                  : 'text-slate-700 hover:bg-white/80'
+              }`}
             >
-              Clinical Dashboard
+              <UserIcon className="w-3.5 h-3.5" />
+              <span>Patient Portal</span>
+            </button>
+
+            <button
+              onClick={() => {
+                switchRole('HOSPITAL_ADMIN');
+                onNavigate('hospital-dashboard');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                currentPage === 'hospital-dashboard'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-700 hover:bg-white/80'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              <span>Hospital Portal</span>
+            </button>
+
+            <button
+              onClick={() => {
+                switchRole('ADMIN');
+                onNavigate('admin-dashboard');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                currentPage === 'admin-dashboard'
+                  ? 'bg-purple-700 text-white shadow-sm'
+                  : 'text-purple-800 bg-purple-100/60 hover:bg-purple-100 border border-purple-200'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-purple-700" />
+              <span>Admin Portal</span>
             </button>
           </div>
 

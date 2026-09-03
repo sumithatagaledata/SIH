@@ -14,7 +14,7 @@ interface LoginPageProps {
   onNavigate?: (page: string) => void;
 }
 
-type Portal = 'CHOOSE' | 'PATIENT' | 'HOSPITAL';
+type Portal = 'CHOOSE' | 'PATIENT' | 'HOSPITAL' | 'ADMIN';
 type AuthMode = 'LOGIN' | 'REGISTER' | 'FORGOT_PASSWORD';
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
@@ -119,6 +119,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
         if (onNavigate) onNavigate('hospital-dashboard');
       } else {
         setErrorMessage(res.message || 'Hospital login failed. Check credentials.');
+      }
+    } catch { setErrorMessage('An unexpected error occurred.'); }
+    finally { setIsLoading(false); }
+  };
+
+  // ── Admin login submit ───────────────────────────────────────────────────────
+  const handleAdminLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+    if (!loginEmail.trim()) { setErrorMessage('Please enter your Admin Email or Username.'); return; }
+    if (!loginPassword.trim()) { setErrorMessage('Please enter your password.'); return; }
+    setIsLoading(true);
+    try {
+      const res = await login(loginEmail, loginPassword);
+      if (res.success) {
+        showToast('Admin Authorization Verified', 'Welcome to MediBridge Platform Admin Dashboard.', 'INFO');
+        if (onNavigate) onNavigate('admin-dashboard');
+      } else {
+        setErrorMessage(res.message || 'Admin login failed. Please verify credentials.');
       }
     } catch { setErrorMessage('An unexpected error occurred.'); }
     finally { setIsLoading(false); }
@@ -296,10 +315,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
       <div className="min-h-[88vh] flex flex-col justify-center max-w-5xl mx-auto px-4 py-8 sm:py-12 space-y-8">
         <BrandHeader />
 
-        <div className="max-w-2xl mx-auto w-full space-y-4">
+        <div className="max-w-4xl mx-auto w-full space-y-4">
           <p className="text-center text-sm text-slate-500 font-semibold">Select your portal to continue</p>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Portal Selector Cards (3 Columns) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             {/* Patient Portal */}
             <button
               type="button"
@@ -357,11 +377,40 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
                 </div>
               </div>
             </button>
+
+            {/* Admin Portal */}
+            <button
+              type="button"
+              onClick={() => handlePortalSelect('ADMIN')}
+              className="group relative p-6 bg-white border-2 border-purple-200 hover:border-purple-500 rounded-3xl text-left transition-all duration-200 hover:-translate-y-1 shadow-md hover:shadow-xl hover:shadow-purple-500/10 overflow-hidden"
+            >
+              <div className="relative space-y-4">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center shadow-md shadow-purple-500/20">
+                  <ShieldAlert className="w-7 h-7 text-white stroke-[2]" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 mb-1">🛡️ Admin Portal</h3>
+                  <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                    Live database registry, registered patients &amp; hospitals, and platform audit logs.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 pt-2">
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <ShieldCheck className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Platform Administrator Access</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <span className="text-[11px] text-purple-700 font-bold uppercase tracking-wider">Admin Sign In</span>
+                  <ChevronRight className="w-4 h-4 text-purple-600 group-hover:translate-x-1 transition-transform" />
+                </div>
+              </div>
+            </button>
           </div>
 
           <div className="p-3 bg-white border border-slate-200 rounded-2xl text-center text-xs text-slate-500 flex items-center justify-center gap-2 shadow-sm">
             <Info className="w-3.5 h-3.5 text-slate-400" />
-            <span>Doctors, Triage Staff &amp; Hospital Admins — use the <strong className="text-slate-700">Hospital Portal</strong></span>
+            <span>Select your portal above to sign in or create an account on MediBridge AI.</span>
           </div>
         </div>
       </div>
@@ -717,4 +766,83 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
       </div>
     </div>
   );
+
+  // SCREEN 2c: Platform Admin Auth
+  if (portal === 'ADMIN') {
+    return (
+      <div className="min-h-[88vh] flex flex-col justify-center max-w-5xl mx-auto px-4 py-8 sm:py-12 space-y-8">
+        <BrandHeader />
+
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-10 shadow-xl max-w-xl mx-auto w-full space-y-6">
+          <PortalHeader color="bg-purple-50 text-purple-800 border-purple-200" icon={ShieldAlert} title="Platform Admin Portal" />
+
+          <ErrorBanner />
+
+          {/* Admin Sign-In Form */}
+          <form onSubmit={handleAdminLoginSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className={labelCls}>
+                <Mail className="w-3.5 h-3.5 text-purple-600" />
+                <span>Admin Email or Username</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={loginEmail}
+                onChange={e => setLoginEmail(e.target.value)}
+                placeholder="admin@apexhealth.in"
+                className={inputCls}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className={labelCls}>
+                <Lock className="w-3.5 h-3.5 text-purple-600" />
+                <span>Admin Password</span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                  placeholder="Enter administrator password"
+                  className={inputCls + ' pr-10'}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl text-xs text-purple-900 flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 flex-shrink-0 text-purple-600 mt-0.5" />
+              <span>Restricted to verified Platform Administrators. Unauthorized access attempts are audited and logged.</span>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full py-3.5 bg-purple-700 hover:bg-purple-800 text-white font-bold text-sm rounded-xl shadow-md shadow-purple-700/20 transition flex items-center justify-center gap-2"
+            >
+              {isLoading ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <span>Sign In as Platform Administrator</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 };
