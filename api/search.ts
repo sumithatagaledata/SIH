@@ -34,14 +34,22 @@ export default async function handler(req: any, res: any) {
           const pId = (p.patientId || '').trim().toUpperCase();
           const pIdAlpha = pId.replace(/[^A-Z0-9]/g, '');
           const pInternalId = (p.id || '').trim().toUpperCase();
+          const pInternalAlpha = pInternalId.replace(/[^A-Z0-9]/g, '');
           const pAbha = (p.abhaId || '').trim().toUpperCase();
           const pAbhaAlpha = pAbha.replace(/[^A-Z0-9]/g, '');
+          const pEmail = (p.email || '').trim().toLowerCase();
+          const pPhone = (p.phone || p.emergencyContactPhone || '').replace(/[^0-9]/g, '');
+          const queryNumeric = cleanId.replace(/[^0-9]/g, '');
 
           return (
             pId === cleanId ||
             pIdAlpha === cleanAlpha ||
             pInternalId === cleanId ||
-            (pAbha && (pAbha === cleanId || pAbhaAlpha === cleanAlpha))
+            pInternalAlpha === cleanAlpha ||
+            (pAbha && (pAbha === cleanId || pAbhaAlpha === cleanAlpha)) ||
+            (cleanId.toLowerCase().includes('@') && pEmail === cleanId.toLowerCase()) ||
+            (queryNumeric.length >= 10 && pPhone.endsWith(queryNumeric.slice(-10))) ||
+            (cleanAlpha.length >= 4 && (pIdAlpha.endsWith(cleanAlpha) || cleanAlpha.endsWith(pIdAlpha)))
           );
         });
 

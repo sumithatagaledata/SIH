@@ -463,9 +463,39 @@ export class MockDatabase {
   public getPatientById(id: string): PatientProfile | undefined {
     if (!id) return undefined;
     const clean = id.trim();
-    return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(
-      p => p.id === clean || (p.patientId && p.patientId.toUpperCase() === clean.toUpperCase()) || p.userId === clean
+    const cleanUpper = clean.toUpperCase();
+    const cleanAlpha = cleanUpper.replace(/[^A-Z0-9]/g, '');
+
+    const patients = this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS);
+    const found = patients.find(
+      p => p.id === clean || 
+           (p.patientId && p.patientId.toUpperCase() === cleanUpper) || 
+           (p.patientId && p.patientId.toUpperCase().replace(/[^A-Z0-9]/g, '') === cleanAlpha) ||
+           p.userId === clean ||
+           (p.abhaId && p.abhaId.toUpperCase() === cleanUpper)
     );
+    if (found) return found;
+
+    // Fallback: Check cloud persistent cache
+    try {
+      const cached = getStorageItem('medibridge_cloud_patients_cache');
+      if (cached) {
+        const parsed: any[] = JSON.parse(cached);
+        const match = parsed.find(
+          p => p.id === clean || 
+               (p.patientId && p.patientId.toUpperCase() === cleanUpper) || 
+               (p.patientId && p.patientId.toUpperCase().replace(/[^A-Z0-9]/g, '') === cleanAlpha) ||
+               p.userId === clean ||
+               (p.abhaId && p.abhaId.toUpperCase() === cleanUpper)
+        );
+        if (match) {
+          this.createPatientProfile(match as PatientProfile);
+          return match as PatientProfile;
+        }
+      }
+    } catch {}
+
+    return undefined;
   }
 
   public getPatientByPatientId(patientId: string): PatientProfile | undefined {
@@ -474,20 +504,49 @@ export class MockDatabase {
     const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
     if (!cleanAlpha) return undefined;
 
-    return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(p => {
-      const pId = (p.patientId || '').trim().toUpperCase();
-      const pIdAlpha = pId.replace(/[^A-Z0-9]/g, '');
-      const pInternalId = (p.id || '').trim().toUpperCase();
-      const pAbha = (p.abhaId || '').trim().toUpperCase();
-      const pAbhaAlpha = pAbha.replace(/[^A-Z0-9]/g, '');
+    const matchPatient = (list: PatientProfile[]) => {
+      return list.find(p => {
+        const pId = (p.patientId || '').trim().toUpperCase();
+        const pIdAlpha = pId.replace(/[^A-Z0-9]/g, '');
+        const pInternalId = (p.id || '').trim().toUpperCase();
+        const pInternalAlpha = pInternalId.replace(/[^A-Z0-9]/g, '');
+        const pAbha = (p.abhaId || '').trim().toUpperCase();
+        const pAbhaAlpha = pAbha.replace(/[^A-Z0-9]/g, '');
+        const pEmail = (p.email || '').trim().toLowerCase();
+        const pPhone = (p.phone || p.emergencyContactPhone || '').replace(/[^0-9]/g, '');
+        const queryNumeric = clean.replace(/[^0-9]/g, '');
 
-      return (
-        pId === clean ||
-        pIdAlpha === cleanAlpha ||
-        pInternalId === clean ||
-        (pAbha && (pAbha === clean || pAbhaAlpha === cleanAlpha))
-      );
-    });
+        return (
+          pId === clean ||
+          pIdAlpha === cleanAlpha ||
+          pInternalId === clean ||
+          pInternalAlpha === cleanAlpha ||
+          (pAbha && (pAbha === clean || pAbhaAlpha === cleanAlpha)) ||
+          (clean.toLowerCase().includes('@') && pEmail === clean.toLowerCase()) ||
+          (queryNumeric.length >= 10 && pPhone.endsWith(queryNumeric.slice(-10))) ||
+          (cleanAlpha.length >= 4 && (pIdAlpha.endsWith(cleanAlpha) || cleanAlpha.endsWith(pIdAlpha)))
+        );
+      });
+    };
+
+    const patients = this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS);
+    const found = matchPatient(patients);
+    if (found) return found;
+
+    // Fallback: Check cloud persistent cache
+    try {
+      const cached = getStorageItem('medibridge_cloud_patients_cache');
+      if (cached) {
+        const parsed: any[] = JSON.parse(cached);
+        const match = matchPatient(parsed as PatientProfile[]);
+        if (match) {
+          this.createPatientProfile(match);
+          return match;
+        }
+      }
+    } catch {}
+
+    return undefined;
   }
 
   public getDoctorByUserId(userId: string): DoctorProfile | undefined {

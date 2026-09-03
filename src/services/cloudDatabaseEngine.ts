@@ -90,6 +90,34 @@ const CLOUD_CONFIG = {
   TRUSTED_HOSPITALS_OBJECT_ID: 'ff808181a067127101a0671ee6fc0029',
 };
 
+const LOCAL_PERSIST_KEYS = {
+  PATIENTS: 'medibridge_cloud_patients_cache',
+  HOSPITALS: 'medibridge_cloud_hospitals_cache',
+  REQUESTS: 'medibridge_cloud_requests_cache',
+  TRUSTED: 'medibridge_cloud_trusted_cache',
+};
+
+function getPersistedCache<T>(key: string): T[] {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage) {
+      const data = localStorage.getItem(key);
+      if (data) {
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    }
+  } catch {}
+  return [];
+}
+
+function setPersistedCache<T>(key: string, items: T[]): void {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage) {
+      localStorage.setItem(key, JSON.stringify(items));
+    }
+  } catch {}
+}
+
 class CloudDatabaseEngine {
   private static instance: CloudDatabaseEngine;
   private patientsCache: CloudPatientRecord[] = [];
@@ -99,6 +127,10 @@ class CloudDatabaseEngine {
   private isInitialized = false;
 
   private constructor() {
+    this.patientsCache = getPersistedCache<CloudPatientRecord>(LOCAL_PERSIST_KEYS.PATIENTS);
+    this.hospitalsCache = getPersistedCache<CloudHospitalRecord>(LOCAL_PERSIST_KEYS.HOSPITALS);
+    this.accessRequestsCache = getPersistedCache<CloudAccessRequestRecord>(LOCAL_PERSIST_KEYS.REQUESTS);
+    this.trustedHospitalsCache = getPersistedCache<CloudTrustedHospitalRecord>(LOCAL_PERSIST_KEYS.TRUSTED);
     this.startBackgroundSync();
   }
 
@@ -155,10 +187,29 @@ class CloudDatabaseEngine {
         this.fetchCloudCollection<CloudTrustedHospitalRecord>(CLOUD_CONFIG.TRUSTED_HOSPITALS_OBJECT_ID)
       ]);
 
-      if (cloudPatients.length > 0) this.patientsCache = cloudPatients;
-      if (cloudHospitals.length > 0) this.hospitalsCache = cloudHospitals;
-      if (cloudRequests.length > 0) this.accessRequestsCache = cloudRequests;
-      if (cloudTrusted.length > 0) this.trustedHospitalsCache = cloudTrusted;
+      if (cloudPatients.length > 0) {
+        // Merge cloud with existing cache to ensure no locally registered patient is lost
+        const mergedPatients = [...cloudPatients];
+        this.patientsCache.forEach(cached => {
+          const exists = mergedPatients.some(p => p.patientId?.trim().toUpperCase() === cached.patientId?.trim().toUpperCase() || p.id === cached.id);
+          if (!exists) mergedPatients.push(cached);
+        });
+        this.patientsCache = mergedPatients;
+        setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, mergedPatients);
+      }
+
+      if (cloudHospitals.length > 0) {
+        this.hospitalsCache = cloudHospitals;
+        setPersistedCache(LOCAL_PERSIST_KEYS.HOSPITALS, cloudHospitals);
+      }
+      if (cloudRequests.length > 0) {
+        this.accessRequestsCache = cloudRequests;
+        setPersistedCache(LOCAL_PERSIST_KEYS.REQUESTS, cloudRequests);
+      }
+      if (cloudTrusted.length > 0) {
+        this.trustedHospitalsCache = cloudTrusted;
+        setPersistedCache(LOCAL_PERSIST_KEYS.TRUSTED, cloudTrusted);
+      }
 
       this.isInitialized = true;
     } catch (err) {
@@ -179,13 +230,19 @@ class CloudDatabaseEngine {
   }
 
   // ==========================================
-  // PATIENT CRUD
+  // PATIENT CRUD (Global Patient Identity)
   // ==========================================
   public async getPatients(): Promise<CloudPatientRecord[]> {
     const cloud = await this.fetchCloudCollection<CloudPatientRecord>(CLOUD_CONFIG.PATIENTS_OBJECT_ID);
     if (cloud.length > 0) {
-      this.patientsCache = cloud;
-      return cloud;
+      const merged = [...cloud];
+      this.patientsCache.forEach(cached => {
+        const exists = merged.some(p => p.patientId?.trim().toUpperCase() === cached.patientId?.trim().toUpperCase() || p.id === cached.id);
+        if (!exists) merged.push(cached);
+      });
+      this.patientsCache = merged;
+      setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, merged);
+      return merged;
     }
     return this.patientsCache;
   }
@@ -201,14 +258,18 @@ class CloudDatabaseEngine {
       return pId !== cleanId && pAlpha !== cleanAlpha && p.id !== patient.id;
     });
 
-    filtered.unshift({
+    const newRecord: CloudPatientRecord = {
       ...patient,
       patientId: cleanId,
       status: 'ACTIVE',
       createdAt: patient.createdAt || new Date().toISOString()
-    });
+    };
+
+    filtered.unshift(newRecord);
 
     this.patientsCache = filtered;
+    setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, filtered);
+
     const success = await this.updateCloudCollection(
       CLOUD_CONFIG.PATIENTS_OBJECT_ID,
       'medibridge_patients_v1',
@@ -223,22 +284,55 @@ class CloudDatabaseEngine {
     const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
     if (!cleanAlpha) return undefined;
 
-    // Fetch fresh cloud records
-    const all = await this.getPatients();
-    return all.find(p => {
-      const pId = (p.patientId || '').trim().toUpperCase();
-      const pIdAlpha = pId.replace(/[^A-Z0-9]/g, '');
-      const pInternalId = (p.id || '').trim().toUpperCase();
-      const pAbha = (p.abhaId || '').trim().toUpperCase();
-      const pAbhaAlpha = pAbha.replace(/[^A-Z0-9]/g, '');
+    // 1. Check current memory & local persistent cache
+    const matchInList = (list: CloudPatientRecord[]) => {
+      return list.find(p => {
+        const pId = (p.patientId || '').trim().toUpperCase();
+        const pIdAlpha = pId.replace(/[^A-Z0-9]/g, '');
+        const pInternalId = (p.id || '').trim().toUpperCase();
+        const pInternalAlpha = pInternalId.replace(/[^A-Z0-9]/g, '');
+        const pAbha = (p.abhaId || '').trim().toUpperCase();
+        const pAbhaAlpha = pAbha.replace(/[^A-Z0-9]/g, '');
+        const pEmail = (p.email || '').trim().toLowerCase();
+        const pPhone = (p.phone || '').replace(/[^0-9]/g, '');
+        const queryNumeric = cleanId.replace(/[^0-9]/g, '');
 
-      return (
-        pId === cleanId ||
-        pIdAlpha === cleanAlpha ||
-        pInternalId === cleanId ||
-        (pAbha && (pAbha === cleanId || pAbhaAlpha === cleanAlpha))
-      );
-    });
+        return (
+          pId === cleanId ||
+          pIdAlpha === cleanAlpha ||
+          pInternalId === cleanId ||
+          pInternalAlpha === cleanAlpha ||
+          (pAbha && (pAbha === cleanId || pAbhaAlpha === cleanAlpha)) ||
+          (cleanId.toLowerCase().includes('@') && pEmail === cleanId.toLowerCase()) ||
+          (queryNumeric.length >= 10 && pPhone.endsWith(queryNumeric.slice(-10))) ||
+          (cleanAlpha.length >= 4 && (pIdAlpha.endsWith(cleanAlpha) || cleanAlpha.endsWith(pIdAlpha)))
+        );
+      });
+    };
+
+    let found = matchInList(this.patientsCache);
+    if (found) return found;
+
+    // 2. Fetch fresh cloud records
+    const all = await this.getPatients();
+    found = matchInList(all);
+    if (found) return found;
+
+    // 3. Fallback: try serverless /api/search endpoint if available
+    try {
+      if (typeof window !== 'undefined' && window.location) {
+        const res = await fetch(`/api/search?patientId=${encodeURIComponent(cleanId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.success && data?.patient) {
+            this.savePatient(data.patient);
+            return data.patient;
+          }
+        }
+      }
+    } catch {}
+
+    return undefined;
   }
 
   // ==========================================

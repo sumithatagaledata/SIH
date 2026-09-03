@@ -12,6 +12,7 @@ import { PreArrivalQueue } from '../../components/doctor/PreArrivalQueue';
 import { ClinicalReviewPanel } from '../../components/doctor/ClinicalReviewPanel';
 import { SharedPatientsPanel } from '../../components/doctor/SharedPatientsPanel';
 import { db } from '../../services/mockDatabase';
+import { cloudDataService } from '../../services/supabaseService';
 import { ClinicalSession, PatientProfile, MedicalDocument, TimelineEvent } from '../../types';
 import { Modal } from '../../components/common/Modal';
 
@@ -73,12 +74,15 @@ export const DoctorDashboard: React.FC = () => {
     };
   }, [searchResult?.patient]);
 
-  const handleSearchPatient = (e: React.FormEvent) => {
+  const handleSearchPatient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchPatientId.trim()) return;
 
     const trimmed = searchPatientId.trim().toUpperCase();
-    const patient = db.getPatientByPatientId(trimmed) || db.getPatientById(trimmed);
+    let patient = await cloudDataService.findPatientByPatientId(trimmed);
+    if (!patient) {
+      patient = db.getPatientByPatientId(trimmed) || db.getPatientById(trimmed);
+    }
 
     if (!patient) {
       setSearchResult({

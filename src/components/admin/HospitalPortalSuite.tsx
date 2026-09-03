@@ -121,7 +121,8 @@ export const HospitalPortalSuite: React.FC = () => {
     }
 
     // Check permission / authorization
-    const isAuthorized = forceBreakGlass || db.isHospitalAuthorizedForPatient(currentHospitalId, patient.patientId);
+    const authCheck = await cloudDataService.checkHospitalAccess(currentHospitalId, patient.patientId);
+    const isAuthorized = forceBreakGlass || authCheck.isAuthorized || db.isHospitalAuthorizedForPatient(currentHospitalId, patient.patientId);
 
     // Retrieve full clinical records from database
     const sessions = db.getClinicalSessionsForPatient(patient.patientId);
@@ -154,7 +155,7 @@ export const HospitalPortalSuite: React.FC = () => {
     } else {
       // Check if there is an access request pending
       const requests = cloudDataService.getAccessRequests();
-      const existingReq = requests.find(
+      const existingReq = authCheck.activeRequest || requests.find(
         r => r.patientId === patient.patientId &&
         (r.hospitalId === currentHospitalId || r.hospitalName === currentHospitalName) &&
         r.status === 'PENDING'

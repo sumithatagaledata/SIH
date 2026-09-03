@@ -517,7 +517,7 @@ class CloudDataService {
     const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
     if (!cleanAlpha) return undefined;
 
-    // 1. Query persistent cloud database (works across all browsers and devices)
+    // 1. Query persistent cloud database (universal single source of truth)
     try {
       const cloudPatient = await cloudDb.findPatientById(cleanId);
       if (cloudPatient) {
@@ -550,13 +550,49 @@ class CloudDataService {
       console.warn('[CloudDB findPatientByPatientId error]:', err);
     }
 
-    // 2. Query Supabase if active
+    // 2. Query Serverless API endpoint /api/search
+    try {
+      if (typeof window !== 'undefined' && window.location) {
+        const res = await fetch(`/api/search?patientId=${encodeURIComponent(cleanId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.success && data?.patient) {
+            const p = data.patient;
+            const profile: PatientProfile = {
+              id: p.id || `pat-${p.patientId}`,
+              userId: p.userId || `usr-${p.patientId}`,
+              patientId: p.patientId,
+              abhaId: p.abhaId,
+              abhaAddress: p.abhaAddress,
+              dob: p.dob || '1990-01-01',
+              age: p.age || 35,
+              gender: p.gender as any || 'FEMALE',
+              bloodGroup: p.bloodGroup || 'B+',
+              fullName: p.fullName,
+              address: p.address || '',
+              city: p.city || '',
+              pincode: p.pincode || '',
+              emergencyContactName: p.emergencyContactName || 'Family',
+              emergencyContactPhone: p.emergencyContactPhone || '',
+              emergencyContactRelation: p.emergencyContactRelation || 'Next of Kin',
+              allergies: p.allergies || [],
+              chronicConditions: p.chronicConditions || [],
+              currentMedications: p.currentMedications || []
+            };
+            db.createPatientProfile(profile);
+            return profile;
+          }
+        }
+      }
+    } catch {}
+
+    // 3. Query Supabase if active
     if (supabase) {
       try {
         const { data, error } = await supabase
           .from('patients')
           .select('*')
-          .or(`patient_id.eq.${cleanId},abha_id.eq.${cleanId}`)
+          .or(`patient_id.eq.${cleanId},abha_id.eq.${cleanId},patient_id.ilike.%${cleanAlpha}%`)
           .maybeSingle();
 
         if (data && !error) {
@@ -590,8 +626,8 @@ class CloudDataService {
       }
     }
 
-    // 3. Check local persistent cache
-    const localPatient = db.getPatientByPatientId(cleanId);
+    // 4. Check local persistent cache
+    const localPatient = db.getPatientByPatientId(cleanId) || db.getPatientById(cleanId);
     if (localPatient) return localPatient;
 
     return undefined;
@@ -812,6 +848,14 @@ class CloudDataService {
 
     syncRelay.publish(`hospital_patient_auth_${hospitalId}_${cleanPatientId}`, { status: 'REVOKED' });
     syncRelay.publish('access_requests_changed', { patientId: cleanPatientId, hospitalId, status: 'REVOKED' });
+  }
+
+  public checkHospitalAccess(hospitalId: string, patientId: string): {
+    isAuthorized: boolean;
+    status: 'NONE' | 'PENDING' | 'APPROVED' | 'DENIED' | 'REVOKED';
+    activeRequest?: AccessRequest;
+  } {
+    return this.checkAccessStatus(hospitalId, patientId);
   }
 
   public checkAccessStatus(hospitalId: string, patientId: string): {
