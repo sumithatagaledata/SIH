@@ -220,6 +220,176 @@ class CloudDataService {
     }
   }
 
+  public async registerHospital(hospitalAccount: any, user: User): Promise<{ success: boolean; hospitalId: string; error?: string }> {
+    try {
+      // 1. Save to local database
+      db.createUser(user);
+      db.createHospitalAccount(hospitalAccount);
+
+      // 2. Persist to Supabase if active
+      if (supabase) {
+        try {
+          const { error: hospErr } = await supabase.from('hospitals').upsert({
+            id: hospitalAccount.id || hospitalAccount.linkedHospitalId,
+            name: hospitalAccount.hospitalName || user.fullName,
+            code: hospitalAccount.registrationId || 'HOSP-REG',
+            registration_number: hospitalAccount.registrationId,
+            email: hospitalAccount.email || user.email,
+            phone: hospitalAccount.emergencyContact || user.phone,
+            emergency_phone: hospitalAccount.emergencyContact,
+            address: hospitalAccount.address || hospitalAccount.location || 'Hospital Location',
+            city: hospitalAccount.city || 'Mumbai',
+            ambulance_available: hospitalAccount.ambulanceAvailable ?? true,
+            is_registered_medibridge: true,
+            verification_status: 'ABDM_REGISTERED',
+            departments: hospitalAccount.departments || ['Emergency & Trauma', 'General Medicine', 'ICU']
+          }, { onConflict: 'id' });
+
+          if (hospErr) console.warn('[Supabase Hospital Insert Warning]', hospErr);
+        } catch (sbErr) {
+          console.warn('[Supabase Hospital Insert Error]', sbErr);
+        }
+      }
+
+      // 3. Broadcast new hospital creation across devices
+      syncRelay.publish('hospital_registered', {
+        hospitalId: hospitalAccount.id || hospitalAccount.linkedHospitalId,
+        hospitalAccount
+      });
+
+      return { success: true, hospitalId: hospitalAccount.id || hospitalAccount.linkedHospitalId };
+    } catch (err: any) {
+      return { success: false, hospitalId: hospitalAccount?.id, error: err.message || 'Failed to create hospital account' };
+    }
+  }
+
+  public async getRegisteredPatients(): Promise<{
+    id: string;
+    patientId: string;
+    fullName: string;
+    email?: string;
+    phone?: string;
+    status: 'ACTIVE' | 'REGISTERED';
+    createdAt: string;
+    city?: string;
+    gender?: string;
+    bloodGroup?: string;
+    dob?: string;
+    age?: number;
+  }[]> {
+    // 1. Query Supabase if active
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('patients')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (data && !error && data.length > 0) {
+          return data.map(p => ({
+            id: p.id || `pat-${p.patient_id}`,
+            patientId: p.patient_id,
+            fullName: p.full_name || 'Registered Patient',
+            email: p.email,
+            phone: p.emergency_contact_phone || p.phone,
+            status: 'ACTIVE',
+            createdAt: p.created_at || new Date().toISOString(),
+            city: p.city || 'Maharashtra',
+            gender: p.gender || 'FEMALE',
+            bloodGroup: p.blood_group || 'B+',
+            dob: p.dob,
+            age: p.age
+          }));
+        }
+      } catch (sbErr) {
+        console.warn('[Supabase getRegisteredPatients error]', sbErr);
+      }
+    }
+
+    // 2. Query local persistent database
+    const localPatients = db.getPatients();
+    const users = db.getUsers();
+    return localPatients.map(p => {
+      const user = users.find(u => u.id === p.userId || u.email?.toLowerCase() === (p.fullName?.toLowerCase().replace(/\s+/g, '.') + '@example.com'));
+      return {
+        id: p.id,
+        patientId: p.patientId,
+        fullName: p.fullName || user?.fullName || 'Registered Patient',
+        email: user?.email,
+        phone: p.emergencyContactPhone || user?.phone,
+        status: 'ACTIVE',
+        createdAt: user?.createdAt || new Date().toISOString(),
+        city: p.city || 'Maharashtra',
+        gender: p.gender,
+        bloodGroup: p.bloodGroup,
+        dob: p.dob,
+        age: p.age
+      };
+    });
+  }
+
+  public async getRegisteredHospitals(): Promise<{
+    id: string;
+    hospitalId: string;
+    hospitalName: string;
+    registrationId?: string;
+    email?: string;
+    phone?: string;
+    location?: string;
+    city?: string;
+    status: 'ACTIVE' | 'VERIFIED' | 'REGISTERED';
+    createdAt: string;
+    ambulanceAvailable?: boolean;
+  }[]> {
+    // 1. Query Supabase if active
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('hospitals')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (data && !error && data.length > 0) {
+          return data.map(h => ({
+            id: h.id,
+            hospitalId: h.id,
+            hospitalName: h.name,
+            registrationId: h.registration_number || h.code,
+            email: h.email,
+            phone: h.emergency_phone || h.phone,
+            location: `${h.city || ''}, ${h.address || ''}`.trim(),
+            city: h.city,
+            status: 'VERIFIED',
+            createdAt: h.created_at || new Date().toISOString(),
+            ambulanceAvailable: h.ambulance_available
+          }));
+        }
+      } catch (sbErr) {
+        console.warn('[Supabase getRegisteredHospitals error]', sbErr);
+      }
+    }
+
+    // 2. Query local persistent database
+    const localAccounts = db.getHospitalAccounts();
+    const users = db.getUsers();
+    return localAccounts.map(h => {
+      const user = users.find(u => u.id === h.userId || u.email?.toLowerCase() === h.email?.toLowerCase());
+      return {
+        id: h.id,
+        hospitalId: h.linkedHospitalId || h.id,
+        hospitalName: h.hospitalName,
+        registrationId: h.registrationId,
+        email: h.email || user?.email,
+        phone: h.emergencyContact || user?.phone,
+        location: `${h.city}, ${h.location || h.address}`.trim(),
+        city: h.city,
+        status: 'VERIFIED',
+        createdAt: h.createdAt || user?.createdAt || new Date().toISOString(),
+        ambulanceAvailable: h.ambulanceAvailable
+      };
+    });
+  }
+
   public async findPatientByPatientId(patientId: string): Promise<PatientProfile | undefined> {
     if (!patientId) return undefined;
     const cleanId = patientId.trim().toUpperCase();

@@ -1,4 +1,4 @@
-export type UserRole = 'PATIENT' | 'DOCTOR' | 'TRIAGE' | 'HOSPITAL_ADMIN' | 'SYSTEM_ADMIN' | 'HOSPITAL';
+export type UserRole = 'PATIENT' | 'DOCTOR' | 'TRIAGE' | 'HOSPITAL_ADMIN' | 'SYSTEM_ADMIN' | 'HOSPITAL' | 'ADMIN';
 
 export type TriagePriority = 'RED' | 'ORANGE' | 'YELLOW' | 'GREEN';
 

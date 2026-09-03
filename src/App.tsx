@@ -8,6 +8,7 @@ import { LoginPage } from './pages/public/LoginPage';
 import { PatientDashboard } from './pages/patient/PatientDashboard';
 import { DoctorDashboard } from './pages/doctor/DoctorDashboard';
 import { TriageDashboard } from './pages/triage/TriageDashboard';
+import { HospitalDashboard } from './pages/hospital/HospitalDashboard';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
 
 const AppContent: React.FC = () => {
@@ -20,7 +21,8 @@ const AppContent: React.FC = () => {
       if (currentRole === 'PATIENT') setCurrentPage('patient-dashboard');
       else if (currentRole === 'DOCTOR') setCurrentPage('doctor-dashboard');
       else if (currentRole === 'TRIAGE') setCurrentPage('triage-dashboard');
-      else if (currentRole === 'HOSPITAL_ADMIN' || currentRole === 'SYSTEM_ADMIN') setCurrentPage('admin-dashboard');
+      else if (currentRole === 'HOSPITAL' || currentRole === 'HOSPITAL_ADMIN') setCurrentPage('hospital-dashboard');
+      else if (currentRole === 'ADMIN' || currentRole === 'SYSTEM_ADMIN') setCurrentPage('admin-dashboard');
     } else {
       setCurrentPage('login');
     }
@@ -49,12 +51,15 @@ const AppContent: React.FC = () => {
         return <DoctorDashboard />;
       case 'triage-dashboard':
         return <TriageDashboard />;
+      case 'hospital-dashboard':
+        return <HospitalDashboard />;
       case 'admin-dashboard':
         return <AdminDashboard />;
       default:
         if (currentRole === 'PATIENT') return <PatientDashboard />;
         if (currentRole === 'DOCTOR') return <DoctorDashboard />;
         if (currentRole === 'TRIAGE') return <TriageDashboard />;
+        if (currentRole === 'HOSPITAL' || currentRole === 'HOSPITAL_ADMIN') return <HospitalDashboard />;
         return <AdminDashboard />;
     }
   };

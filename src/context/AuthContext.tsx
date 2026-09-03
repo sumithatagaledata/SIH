@@ -396,7 +396,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       linkedHospitalId: hospitalId,
       createdAt: new Date().toISOString()
     };
-    db.createHospitalAccount(newHospitalAccount);
+    
+    // Persist to Cloud Database Service
+    const regResult = await cloudDataService.registerHospital(newHospitalAccount, newUser);
+    if (!regResult.success) {
+      return { success: false, message: regResult.error || 'Failed to create hospital account in database.' };
+    }
 
     setCurrentUser(newUser);
     setHospitalAccount(newHospitalAccount);

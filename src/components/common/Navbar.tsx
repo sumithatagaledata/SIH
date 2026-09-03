@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Activity, User as UserIcon, Stethoscope, Siren, ShieldAlert,
   Globe, Bell, ChevronDown, Check, Sparkles, HeartPulse, FileText,
-  Clock, Info, LogOut, Menu, X
+  Clock, Info, LogOut, Menu, X, Building2
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -27,7 +27,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate }) => {
     { role: 'PATIENT', label: 'Patient Portal', icon: UserIcon, color: 'text-teal-600 bg-teal-50', desc: 'Home AI Intake & Health Records' },
     { role: 'DOCTOR', label: 'Physician Portal', icon: Stethoscope, color: 'text-blue-600 bg-blue-50', desc: 'Pre-arrival Queue & Verification' },
     { role: 'TRIAGE', label: 'Hospital Triage / ER', icon: Siren, color: 'text-red-600 bg-red-50', desc: 'Emergency Command & Ambulance' },
-    { role: 'HOSPITAL_ADMIN', label: 'System Admin', icon: ShieldAlert, color: 'text-purple-600 bg-purple-50', desc: 'Analytics, ABHA & Audit Trail' },
+    { role: 'HOSPITAL_ADMIN', label: 'Hospital Portal', icon: Building2, color: 'text-indigo-600 bg-indigo-50', desc: 'Patient Intake & Bed Management' },
+    { role: 'ADMIN', label: 'Platform Admin', icon: ShieldAlert, color: 'text-purple-600 bg-purple-50', desc: 'Live Database & Registered Accounts' },
   ];
 
   const languages: { code: LanguageCode; label: string; sub: string }[] = [
@@ -48,7 +49,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate }) => {
     if (role === 'PATIENT') onNavigate('patient-dashboard');
     else if (role === 'DOCTOR') onNavigate('doctor-dashboard');
     else if (role === 'TRIAGE') onNavigate('triage-dashboard');
-    else if (role === 'HOSPITAL_ADMIN') onNavigate('admin-dashboard');
+    else if (role === 'HOSPITAL_ADMIN' || role === 'HOSPITAL') onNavigate('hospital-dashboard');
+    else if (role === 'ADMIN' || role === 'SYSTEM_ADMIN') onNavigate('admin-dashboard');
   };
 
   const handleDashboardNavigate = () => {
@@ -56,6 +58,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentPage, onNavigate }) => {
     if (currentRole === 'PATIENT') onNavigate('patient-dashboard');
     else if (currentRole === 'DOCTOR') onNavigate('doctor-dashboard');
     else if (currentRole === 'TRIAGE') onNavigate('triage-dashboard');
+    else if (currentRole === 'HOSPITAL' || currentRole === 'HOSPITAL_ADMIN') onNavigate('hospital-dashboard');
     else onNavigate('admin-dashboard');
   };
 

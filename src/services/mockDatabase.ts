@@ -1022,6 +1022,10 @@ export class MockDatabase {
     return `HOSP-2026-${code}`;
   }
 
+  public getPatients(): PatientProfile[] {
+    return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS);
+  }
+
   public getPatientByUserId(userId: string): PatientProfile | undefined {
     return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(p => p.userId === userId);
   }

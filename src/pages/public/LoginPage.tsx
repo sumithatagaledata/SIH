@@ -116,7 +116,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
       const res = await login(loginEmail, loginPassword);
       if (res.success) {
         showToast('Hospital Portal Access Granted', 'Welcome to MediBridge Hospital Dashboard.', 'INFO');
-        if (onNavigate) onNavigate('admin-dashboard');
+        if (onNavigate) onNavigate('hospital-dashboard');
       } else {
         setErrorMessage(res.message || 'Hospital login failed. Check credentials.');
       }
@@ -223,7 +223,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
           `${hospName} registered with Permanent ID: ${res.hospitalId}. Now discoverable by nearby patients!`,
           'INFO'
         );
-        if (onNavigate) onNavigate('admin-dashboard');
+        if (onNavigate) onNavigate('hospital-dashboard');
       } else {
         setErrorMessage(res.message || 'Hospital registration failed.');
       }
