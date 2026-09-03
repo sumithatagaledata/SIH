@@ -72,12 +72,12 @@ export const AppointmentBooker: React.FC = () => {
     'General Surgery'
   ];
 
-  // Execute real API fetch via unified LocationHospitalService
+  // Execute real discovery via unified LocationHospitalService
   const fetchNearbyHospitals = useCallback(async (coords: { lat: number; lng: number }, radius: number, query: string) => {
     setIsApiLoading(true);
     setApiError(null);
     try {
-      const results = await LocationHospitalService.fetchRealHospitalsFromApi(
+      const results = await LocationHospitalService.getCombinedNearbyHospitals(
         coords,
         radius,
         query
@@ -99,8 +99,9 @@ export const AppointmentBooker: React.FC = () => {
         });
       }
     } catch {
-      setApiError('Unable to query OpenStreetMap Places API. Check connection.');
-      setRealHospitals([]);
+      setApiError('Unable to query hospitals. Retrying with local registry...');
+      const fallback = await LocationHospitalService.getCombinedNearbyHospitals(coords, 9999, query);
+      setRealHospitals(fallback);
     } finally {
       setIsApiLoading(false);
     }

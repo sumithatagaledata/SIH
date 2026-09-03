@@ -55,18 +55,27 @@ export interface DoctorProfile {
 }
 
 export interface Hospital {
-  id: string;
+  id: string; // Permanent Unique Hospital ID e.g. HOSP-2026-00123
   name: string;
   code: string;
+  registrationNumber?: string;
+  email?: string;
+  phone?: string;
   address: string;
   city: string;
+  state?: string;
+  pincode?: string;
   emergencyPhone: string;
   coordinates: { lat: number; lng: number };
   emergencyCapacityTotal: number;
   emergencyCapacityOccupied: number;
   icuBedsAvailable: number;
   generalBedsAvailable: number;
+  ambulanceAvailable?: boolean;
+  isRegisteredMediBridge?: boolean;
+  verificationStatus?: 'REAL_API_RESULT' | 'ABDM_REGISTERED' | 'VERIFIED_FACILITY';
   departments: string[];
+  createdAt?: string;
 }
 
 export interface Department {

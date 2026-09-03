@@ -191,10 +191,11 @@ export const AIIntakeChat: React.FC<AIIntakeChatProps> = ({
           onEmergencyTriggered(updatedAlert.id);
         } else {
           // Create new Emergency Alert with patient's statement and live metadata
-          const pName = currentUser?.fullName || 'Registered Patient';
+          const pName = currentUser?.fullName || patientProfile?.fullName || 'Registered Patient';
           const trustedHospitals = db.getTrustedHospitals(pId).filter(t => t.status === 'ACTIVE');
-          const targetHospitalId = trustedHospitals[0]?.hospitalId || 'hosp-001';
-          const targetHospitalName = trustedHospitals[0]?.hospitalName || 'Apex Super Speciality Hospital';
+          const registeredHospitals = db.getHospitals();
+          const targetHospitalId = trustedHospitals[0]?.hospitalId || (registeredHospitals.length > 0 ? registeredHospitals[0].id : 'HOSP-2026-00101');
+          const targetHospitalName = trustedHospitals[0]?.hospitalName || (registeredHospitals.length > 0 ? registeredHospitals[0].name : 'Talegaon General & Emergency Hospital');
 
           const alertId = `emg-${Date.now()}`;
           const newEmergencyAlert = {

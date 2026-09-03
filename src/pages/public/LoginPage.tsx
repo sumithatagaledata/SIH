@@ -4,10 +4,11 @@ import {
   Stethoscope, Siren, ShieldAlert, ArrowRight, AlertTriangle,
   CheckCircle2, Globe, Eye, EyeOff, KeyRound, RefreshCw, Activity,
   Info, FileText, Building2, MapPin, Ambulance, ArrowLeft,
-  ChevronRight
+  ChevronRight, Navigation, Crosshair
 } from 'lucide-react';
 import { useAuth, RegisterPatientData, RegisterHospitalData } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
+import { LocationHospitalService } from '../../services/locationHospitalService';
 
 interface LoginPageProps {
   onNavigate?: (page: string) => void;
@@ -53,11 +54,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
   const [hospAddress, setHospAddress] = useState('');
   const [hospCity, setHospCity] = useState('');
   const [hospLocation, setHospLocation] = useState('');
+  const [hospState, setHospState] = useState('Maharashtra');
+  const [hospPincode, setHospPincode] = useState('');
   const [hospEmergencyContact, setHospEmergencyContact] = useState('');
   const [hospEmail, setHospEmail] = useState('');
   const [hospPassword, setHospPassword] = useState('');
   const [hospConfirmPassword, setHospConfirmPassword] = useState('');
   const [hospAmbulance, setHospAmbulance] = useState(true);
+  const [hospCoords, setHospCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [isLocatingHosp, setIsLocatingHosp] = useState(false);
 
   // ── Forgot password state ───────────────────────────────────────────────────
   const [forgotEmail, setForgotEmail] = useState('');
@@ -164,12 +169,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
     finally { setIsLoading(false); }
   };
 
+  // ── Hospital GPS handler ──────────────────────────────────────────────────
+  const handleGetHospitalGps = async () => {
+    setIsLocatingHosp(true);
+    showToast('GPS Sensor', 'Acquiring hospital coordinates...', 'INFO');
+    try {
+      const gps = await LocationHospitalService.getCurrentGpsPosition();
+      setHospCoords(gps.coordinates);
+      if (gps.city) setHospCity(gps.city);
+      if (!hospLocation) setHospLocation(gps.city || 'Local Area');
+      if (!hospAddress) setHospAddress(`Facility Location (${gps.coordinates.lat.toFixed(4)}°, ${gps.coordinates.lng.toFixed(4)}°)`);
+      showToast('📍 GPS Locked', `Hospital Coordinates: ${gps.coordinates.lat.toFixed(4)}°, ${gps.coordinates.lng.toFixed(4)}°`, 'VERIFICATION');
+    } catch {
+      showToast('GPS Error', 'Could not acquire device GPS. Please enter address manually.', 'INFO');
+    } finally {
+      setIsLocatingHosp(false);
+    }
+  };
+
   // ── Hospital register submit ─────────────────────────────────────────────────
   const handleHospitalRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     if (!hospName.trim() || !hospRegId.trim() || !hospEmail.trim() || !hospPassword.trim()) {
-      setErrorMessage('Please complete all required fields.');
+      setErrorMessage('Please complete all required fields (Name, Registration ID, Email, Password).');
       return;
     }
     if (hospPassword !== hospConfirmPassword) {
@@ -181,18 +204,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
       const hospitalData: RegisterHospitalData = {
         hospitalName: hospName.trim(),
         registrationId: hospRegId.trim(),
-        address: hospAddress.trim() || 'Hospital Address',
-        city: hospCity.trim() || 'Mumbai',
-        location: hospLocation.trim() || hospCity.trim() || 'Mumbai',
+        address: hospAddress.trim() || 'Hospital Facility Address',
+        city: hospCity.trim() || 'Talegaon Dabhade',
+        location: hospLocation.trim() || hospCity.trim() || 'Talegaon Dabhade',
+        state: hospState.trim() || 'Maharashtra',
+        pincode: hospPincode.trim() || '410507',
         emergencyContact: hospEmergencyContact.trim() || '+91 22 0000 0000',
         email: hospEmail.trim(),
         password: hospPassword,
         ambulanceAvailable: hospAmbulance,
-        departments: ['Emergency & Trauma', 'General Medicine']
+        coordinates: hospCoords || undefined,
+        departments: ['Emergency & Trauma', 'General Medicine', 'Cardiology', 'ICU', 'Orthopedics']
       };
       const res = await registerHospital(hospitalData);
       if (res.success) {
-        showToast('🏥 Hospital Account Created!', `${hospName} is now registered on MediBridge AI.`, 'INFO');
+        showToast(
+          '🏥 Hospital Account Created!',
+          `${hospName} registered with Permanent ID: ${res.hospitalId}. Now discoverable by nearby patients!`,
+          'INFO'
+        );
         if (onNavigate) onNavigate('admin-dashboard');
       } else {
         setErrorMessage(res.message || 'Hospital registration failed.');
@@ -578,15 +608,44 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
             </div>
 
             {/* Location */}
-            <div className="pb-1">
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-3">Location</p>
+            <div className="pb-1 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Hospital Location &amp; Coordinates</p>
+                <button
+                  type="button"
+                  onClick={handleGetHospitalGps}
+                  disabled={isLocatingHosp}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-lg text-xs font-bold transition shadow-sm"
+                >
+                  {isLocatingHosp ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Crosshair className="w-3.5 h-3.5 text-teal-600" />
+                  )}
+                  <span>📍 Use Current Location (GPS)</span>
+                </button>
+              </div>
+
+              {hospCoords && (
+                <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                  <span className="font-mono font-bold">
+                    GPS Coordinates Locked: {hospCoords.lat.toFixed(4)}°, {hospCoords.lng.toFixed(4)}°
+                  </span>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2"><label className={labelCls}><MapPin className="w-3.5 h-3.5 text-blue-600" />Hospital Address</label>
-                  <input type="text" value={hospAddress} onChange={e => setHospAddress(e.target.value)} placeholder="Street address, area" className={inputCls} /></div>
-                <div><label className={labelCls}>City</label>
-                  <input type="text" value={hospCity} onChange={e => setHospCity(e.target.value)} placeholder="e.g. Mumbai" className={inputCls} /></div>
-                <div><label className={labelCls}>Location / Area</label>
-                  <input type="text" value={hospLocation} onChange={e => setHospLocation(e.target.value)} placeholder="e.g. Vashi, Navi Mumbai" className={inputCls} /></div>
+                  <input type="text" value={hospAddress} onChange={e => setHospAddress(e.target.value)} placeholder="e.g. Station Road, Talegaon Dabhade" className={inputCls} /></div>
+                <div><label className={labelCls}>Locality / Area *</label>
+                  <input type="text" required value={hospLocation} onChange={e => setHospLocation(e.target.value)} placeholder="e.g. Talegaon Dabhade" className={inputCls} /></div>
+                <div><label className={labelCls}>City *</label>
+                  <input type="text" required value={hospCity} onChange={e => setHospCity(e.target.value)} placeholder="e.g. Pune / Mumbai" className={inputCls} /></div>
+                <div><label className={labelCls}>State</label>
+                  <input type="text" value={hospState} onChange={e => setHospState(e.target.value)} placeholder="e.g. Maharashtra" className={inputCls} /></div>
+                <div><label className={labelCls}>PIN Code</label>
+                  <input type="text" value={hospPincode} onChange={e => setHospPincode(e.target.value)} placeholder="e.g. 410507" className={inputCls} /></div>
               </div>
             </div>
 

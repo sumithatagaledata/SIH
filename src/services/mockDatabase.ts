@@ -22,126 +22,198 @@ const STORAGE_KEYS = {
   NOTIFICATIONS: 'medibridge_notifications',
 };
 
-// Seed Hospitals
+// Seed Hospitals (Single Shared Source of Truth)
 const SEED_HOSPITALS: Hospital[] = [
   {
-    id: 'hosp-001',
+    id: 'HOSP-2026-00101',
     name: 'Apex Super Speciality Hospital & Trauma Center',
     code: 'APEX-MUM-01',
+    registrationNumber: 'DH-MH-2020-00491',
+    email: 'portal@apexhealth.in',
+    phone: '+91 22 2789 9900',
     address: 'Sector 14, Vashi, Navi Mumbai, Maharashtra 400703',
     city: 'Navi Mumbai',
+    state: 'Maharashtra',
+    pincode: '400703',
     emergencyPhone: '+91 22 2789 9900',
     coordinates: { lat: 19.0760, lng: 72.8777 },
     emergencyCapacityTotal: 25,
     emergencyCapacityOccupied: 14,
     icuBedsAvailable: 8,
     generalBedsAvailable: 34,
-    departments: ['Cardiology', 'Emergency & Trauma', 'Pulmonology', 'General Medicine', 'Neurology', 'Orthopedics']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Cardiology', 'Emergency & Trauma', 'Pulmonology', 'General Medicine', 'Neurology', 'Orthopedics'],
+    createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hosp-002',
+    id: 'HOSP-2026-00102',
     name: 'All India Institute of Medical Sciences (AIIMS)',
     code: 'AIIMS-DEL-01',
+    registrationNumber: 'AIIMS-DEL-GOV-001',
+    email: 'portal@aiims.edu.in',
+    phone: '+91 11 2658 8500',
     address: 'Ansari Nagar, New Delhi 110029',
     city: 'New Delhi',
+    state: 'Delhi',
+    pincode: '110029',
     emergencyPhone: '+91 11 2658 8500',
     coordinates: { lat: 28.5672, lng: 77.2100 },
     emergencyCapacityTotal: 50,
     emergencyCapacityOccupied: 42,
     icuBedsAvailable: 4,
     generalBedsAvailable: 18,
-    departments: ['Cardiology', 'Emergency Medicine', 'Pulmonology', 'Pediatrics', 'Oncology', 'Gastroenterology']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Cardiology', 'Emergency Medicine', 'Pulmonology', 'Pediatrics', 'Oncology', 'Gastroenterology'],
+    createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hosp-003',
+    id: 'HOSP-2026-00103',
     name: 'King Edward Memorial (KEM) Hospital',
     code: 'KEM-MUM-02',
+    registrationNumber: 'BMC-KEM-2019-003',
+    email: 'portal@kemhospital.in',
+    phone: '+91 22 2410 7000',
     address: 'Acharya Donde Marg, Parel, Mumbai, Maharashtra 400012',
     city: 'Mumbai',
+    state: 'Maharashtra',
+    pincode: '400012',
     emergencyPhone: '+91 22 2410 7000',
     coordinates: { lat: 19.0016, lng: 72.8427 },
     emergencyCapacityTotal: 40,
     emergencyCapacityOccupied: 31,
     icuBedsAvailable: 6,
     generalBedsAvailable: 29,
-    departments: ['Trauma & Emergency', 'Internal Medicine', 'Cardiology', 'Chest Medicine', 'General Surgery']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Trauma & Emergency', 'Internal Medicine', 'Cardiology', 'Chest Medicine', 'General Surgery'],
+    createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hosp-004',
+    id: 'HOSP-2026-00104',
     name: 'MIMER General Hospital & Medical College',
     code: 'MIMER-TAL-01',
+    registrationNumber: 'MIMER-TAL-2021-09',
+    email: 'portal@mimer.talegaon.in',
+    phone: '+91 2114 223101',
     address: 'Station Road, Talegaon Dabhade, Pune, Maharashtra 410507',
     city: 'Talegaon Dabhade',
+    state: 'Maharashtra',
+    pincode: '410507',
     emergencyPhone: '+91 2114 223101',
     coordinates: { lat: 18.7303, lng: 73.6766 },
     emergencyCapacityTotal: 30,
     emergencyCapacityOccupied: 12,
     icuBedsAvailable: 10,
     generalBedsAvailable: 45,
-    departments: ['Emergency & Trauma', 'General Medicine', 'Orthopedics', 'Pediatrics', 'Obstetrics & Gynecology']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Emergency & Trauma', 'General Medicine', 'Orthopedics', 'Pediatrics', 'Obstetrics & Gynecology'],
+    createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hosp-005',
+    id: 'HOSP-2026-00105',
     name: 'Pawana Super Speciality Hospital & Trauma Center',
     code: 'PAWANA-TAL-02',
+    registrationNumber: 'PAWANA-TAL-2022-14',
+    email: 'portal@pawanahospital.in',
+    phone: '+91 2114 287000',
     address: 'Somatane Phata, Mumbai-Pune Expressway, Talegaon Dabhade, Pune 410506',
     city: 'Talegaon Dabhade',
+    state: 'Maharashtra',
+    pincode: '410506',
     emergencyPhone: '+91 2114 287000',
     coordinates: { lat: 18.7180, lng: 73.6890 },
     emergencyCapacityTotal: 20,
     emergencyCapacityOccupied: 8,
     icuBedsAvailable: 7,
     generalBedsAvailable: 28,
-    departments: ['Emergency Medicine', 'Cardiology', 'Neurology', 'Critical Care', 'Orthopedics']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Emergency Medicine', 'Cardiology', 'Neurology', 'Critical Care', 'Orthopedics'],
+    createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hosp-006',
+    id: 'HOSP-2026-00106',
     name: 'Talegaon General Hospital & Intensive Care',
     code: 'TGH-TAL-03',
+    registrationNumber: 'TGH-TAL-2023-02',
+    email: 'portal@talegaonhospital.in',
+    phone: '+91 2114 228900',
     address: 'Old Mumbai-Pune Highway, Talegaon Dabhade, Pune 410507',
     city: 'Talegaon Dabhade',
+    state: 'Maharashtra',
+    pincode: '410507',
     emergencyPhone: '+91 2114 228900',
     coordinates: { lat: 18.7320, lng: 73.6810 },
     emergencyCapacityTotal: 18,
     emergencyCapacityOccupied: 6,
     icuBedsAvailable: 5,
     generalBedsAvailable: 22,
-    departments: ['Trauma & Emergency', 'General Surgery', 'ICU & Critical Care', 'Pulmonology']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Trauma & Emergency', 'General Surgery', 'ICU & Critical Care', 'Pulmonology'],
+    createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hosp-007',
+    id: 'HOSP-2026-00107',
     name: 'Yashwantrao Chavan Memorial (YCM) Hospital',
     code: 'YCM-PIM-01',
+    registrationNumber: 'YCM-PIM-2018-05',
+    email: 'portal@ycmhospital.in',
+    phone: '+91 20 2742 2566',
     address: 'Sant Tukaram Nagar, Pimpri, Pune, Maharashtra 411018',
     city: 'Pune',
+    state: 'Maharashtra',
+    pincode: '411018',
     emergencyPhone: '+91 20 2742 2566',
     coordinates: { lat: 18.6270, lng: 73.8120 },
     emergencyCapacityTotal: 45,
     emergencyCapacityOccupied: 30,
     icuBedsAvailable: 9,
     generalBedsAvailable: 50,
-    departments: ['Emergency & Trauma', 'Cardiology', 'Pediatrics', 'Nephrology', 'General Surgery']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Emergency & Trauma', 'Cardiology', 'Pediatrics', 'Nephrology', 'General Surgery'],
+    createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hosp-008',
+    id: 'HOSP-2026-00108',
     name: 'Ruby Hall Clinic & Medical Research Center',
     code: 'RUBY-PUN-01',
+    registrationNumber: 'RUBY-PUN-2015-11',
+    email: 'portal@rubyhall.com',
+    phone: '+91 20 6645 5100',
     address: '40 Sassoon Road, Sangamvadi, Pune, Maharashtra 411001',
     city: 'Pune',
+    state: 'Maharashtra',
+    pincode: '411001',
     emergencyPhone: '+91 20 6645 5100',
     coordinates: { lat: 18.5280, lng: 73.8740 },
     emergencyCapacityTotal: 35,
     emergencyCapacityOccupied: 22,
     icuBedsAvailable: 12,
     generalBedsAvailable: 40,
-    departments: ['Cardiology', 'Emergency Medicine', 'Neurology', 'Oncology', 'Organ Transplant']
+    ambulanceAvailable: true,
+    isRegisteredMediBridge: true,
+    verificationStatus: 'ABDM_REGISTERED',
+    departments: ['Cardiology', 'Emergency Medicine', 'Neurology', 'Oncology', 'Organ Transplant'],
+    createdAt: '2025-10-01T08:00:00Z'
   }
 ];
 
-// Seed Hospital Accounts (portal logins for hospitals)
+// Seed Hospital Accounts (portal logins for hospitals — unified IDs)
 const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [
   {
-    id: 'hacct-001',
+    id: 'HOSP-2026-00101',
     userId: 'usr-hosp-01',
     hospitalName: 'Apex Super Speciality Hospital & Trauma Center',
     registrationId: 'DH-MH-2020-00491',
@@ -151,12 +223,13 @@ const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [
     emergencyContact: '+91 22 2789 9900',
     email: 'portal@apexhealth.in',
     ambulanceAvailable: true,
+    coordinates: { lat: 19.0760, lng: 72.8777 },
     departments: ['Cardiology', 'Emergency & Trauma', 'Pulmonology', 'General Medicine', 'Neurology', 'Orthopedics'],
-    linkedHospitalId: 'hosp-001',
+    linkedHospitalId: 'HOSP-2026-00101',
     createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hacct-002',
+    id: 'HOSP-2026-00102',
     userId: 'usr-hosp-02',
     hospitalName: 'All India Institute of Medical Sciences (AIIMS)',
     registrationId: 'AIIMS-DEL-GOV-001',
@@ -166,12 +239,13 @@ const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [
     emergencyContact: '+91 11 2658 8500',
     email: 'portal@aiims.edu.in',
     ambulanceAvailable: true,
+    coordinates: { lat: 28.5672, lng: 77.2100 },
     departments: ['Cardiology', 'Emergency Medicine', 'Pulmonology', 'Pediatrics', 'Oncology', 'Gastroenterology'],
-    linkedHospitalId: 'hosp-002',
+    linkedHospitalId: 'HOSP-2026-00102',
     createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hacct-003',
+    id: 'HOSP-2026-00103',
     userId: 'usr-hosp-03',
     hospitalName: 'King Edward Memorial (KEM) Hospital',
     registrationId: 'BMC-KEM-2019-003',
@@ -181,12 +255,13 @@ const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [
     emergencyContact: '+91 22 2410 7000',
     email: 'portal@kemhospital.in',
     ambulanceAvailable: true,
+    coordinates: { lat: 19.0016, lng: 72.8427 },
     departments: ['Trauma & Emergency', 'Internal Medicine', 'Cardiology', 'Chest Medicine', 'General Surgery'],
-    linkedHospitalId: 'hosp-003',
+    linkedHospitalId: 'HOSP-2026-00103',
     createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hacct-004',
+    id: 'HOSP-2026-00104',
     userId: 'usr-hosp-04',
     hospitalName: 'MIMER General Hospital & Medical College',
     registrationId: 'MIMER-TAL-2021-09',
@@ -196,12 +271,13 @@ const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [
     emergencyContact: '+91 2114 223101',
     email: 'portal@mimer.talegaon.in',
     ambulanceAvailable: true,
+    coordinates: { lat: 18.7303, lng: 73.6766 },
     departments: ['Emergency & Trauma', 'General Medicine', 'Orthopedics', 'Pediatrics', 'Obstetrics & Gynecology'],
-    linkedHospitalId: 'hosp-004',
+    linkedHospitalId: 'HOSP-2026-00104',
     createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hacct-005',
+    id: 'HOSP-2026-00105',
     userId: 'usr-hosp-05',
     hospitalName: 'Pawana Super Speciality Hospital & Trauma Center',
     registrationId: 'PAWANA-TAL-2022-14',
@@ -211,12 +287,13 @@ const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [
     emergencyContact: '+91 2114 287000',
     email: 'portal@pawanahospital.in',
     ambulanceAvailable: true,
+    coordinates: { lat: 18.7180, lng: 73.6890 },
     departments: ['Emergency Medicine', 'Cardiology', 'Neurology', 'Critical Care', 'Orthopedics'],
-    linkedHospitalId: 'hosp-005',
+    linkedHospitalId: 'HOSP-2026-00105',
     createdAt: '2025-10-01T08:00:00Z'
   },
   {
-    id: 'hacct-006',
+    id: 'HOSP-2026-00106',
     userId: 'usr-hosp-06',
     hospitalName: 'Talegaon General Hospital & Intensive Care',
     registrationId: 'TGH-TAL-2023-02',
@@ -226,8 +303,9 @@ const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [
     emergencyContact: '+91 2114 228900',
     email: 'portal@talegaonhospital.in',
     ambulanceAvailable: true,
+    coordinates: { lat: 18.7320, lng: 73.6810 },
     departments: ['Trauma & Emergency', 'General Surgery', 'ICU & Critical Care', 'Pulmonology'],
-    linkedHospitalId: 'hosp-006',
+    linkedHospitalId: 'HOSP-2026-00106',
     createdAt: '2025-10-01T08:00:00Z'
   }
 ];
@@ -344,17 +422,44 @@ const SEED_CONSENTS: ConsentRecord[] = [];
 const SEED_AUDIT_LOGS: AuditLog[] = [];
 const SEED_NOTIFICATIONS: AppNotification[] = [];
 
-// Safe LocalStorage Initializer
+// Safe Storage Adapter with Memory Fallback
+const memoryStore = new Map<string, string>();
+
+function getStorageItem(key: string): string | null {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage) {
+      return localStorage.getItem(key);
+    }
+    return memoryStore.get(key) || null;
+  } catch {
+    return memoryStore.get(key) || null;
+  }
+}
+
+function setStorageItem(key: string, value: string): void {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage) {
+      localStorage.setItem(key, value);
+    }
+    memoryStore.set(key, value);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { key } }));
+    }
+  } catch {
+    memoryStore.set(key, value);
+  }
+}
+
 function initializeStorage<T>(key: string, initialData: T): T {
   try {
-    const existing = localStorage.getItem(key);
+    const existing = getStorageItem(key);
     if (!existing) {
-      localStorage.setItem(key, JSON.stringify(initialData));
+      setStorageItem(key, JSON.stringify(initialData));
       return initialData;
     }
     return JSON.parse(existing);
-  } catch (err) {
-    console.warn(`Error accessing localStorage for ${key}:`, err);
+  } catch {
+    setStorageItem(key, JSON.stringify(initialData));
     return initialData;
   }
 }
@@ -374,65 +479,26 @@ export class MockDatabase {
     return MockDatabase.instance;
   }
 
-  private init() {
-    // Purge legacy demo patient records from existing browser localStorage if present
-    try {
-      const existingPatients = localStorage.getItem(STORAGE_KEYS.PATIENTS);
-      if (existingPatients && (existingPatients.includes('Rahul Sharma') || existingPatients.includes('pat-001') || existingPatients.includes('Anita Patel'))) {
-        const parsed = JSON.parse(existingPatients).filter((p: any) => p.id !== 'pat-001' && p.id !== 'pat-002');
-        localStorage.setItem(STORAGE_KEYS.PATIENTS, JSON.stringify(parsed));
-      }
-
-      const existingUsers = localStorage.getItem(STORAGE_KEYS.USERS);
-      if (existingUsers && (existingUsers.includes('rahul.sharma@example.com') || existingUsers.includes('anita.patel@example.com') || existingUsers.includes('usr-demo-'))) {
-        const parsed = JSON.parse(existingUsers).filter((u: any) => u.id !== 'usr-pat-01' && u.id !== 'usr-pat-02' && !u.id.startsWith('usr-demo-'));
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(parsed));
-      }
-
-      const existingSessions = localStorage.getItem(STORAGE_KEYS.SESSIONS);
-      if (existingSessions && (existingSessions.includes('pat-001') || existingSessions.includes('Rahul Sharma') || existingSessions.includes('ses-demo-'))) {
-        const parsed = JSON.parse(existingSessions).filter((s: any) => s.patientId !== 'pat-001' && s.patientId !== 'pat-002' && !s.id.startsWith('ses-demo-'));
-        localStorage.setItem(STORAGE_KEYS.SESSIONS, JSON.stringify(parsed));
-      }
-
-      const existingDocs = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
-      if (existingDocs && (existingDocs.includes('pat-001') || existingDocs.includes('pat-002'))) {
-        const parsed = JSON.parse(existingDocs).filter((d: any) => d.patientId !== 'pat-001' && d.patientId !== 'pat-002');
-        localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(parsed));
-      }
-
-      const existingTimeline = localStorage.getItem(STORAGE_KEYS.TIMELINE);
-      if (existingTimeline && (existingTimeline.includes('pat-001') || existingTimeline.includes('pat-002'))) {
-        const parsed = JSON.parse(existingTimeline).filter((t: any) => t.patientId !== 'pat-001' && t.patientId !== 'pat-002');
-        localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(parsed));
-      }
-
-      const existingEmergencies = localStorage.getItem(STORAGE_KEYS.EMERGENCIES);
-      if (existingEmergencies && (existingEmergencies.includes('emg-001') || existingEmergencies.includes('pat-002'))) {
-        const parsed = JSON.parse(existingEmergencies).filter((e: any) => e.id !== 'emg-001' && e.patientId !== 'pat-002');
-        localStorage.setItem(STORAGE_KEYS.EMERGENCIES, JSON.stringify(parsed));
-      }
-    } catch {}
-
+  private init(): void {
     initializeStorage(STORAGE_KEYS.USERS, SEED_USERS);
-    initializeStorage(STORAGE_KEYS.PATIENTS, []);
+    initializeStorage(STORAGE_KEYS.PATIENTS, SEED_PATIENTS);
     initializeStorage(STORAGE_KEYS.DOCTORS, SEED_DOCTORS);
-    initializeStorage(STORAGE_KEYS.HOSPITALS, SEED_HOSPITALS);
     initializeStorage(STORAGE_KEYS.HOSPITAL_ACCOUNTS, SEED_HOSPITAL_ACCOUNTS);
+    initializeStorage(STORAGE_KEYS.HOSPITALS, SEED_HOSPITALS);
     initializeStorage(STORAGE_KEYS.TRUSTED_HOSPITALS, SEED_TRUSTED_HOSPITALS);
-    initializeStorage(STORAGE_KEYS.SESSIONS, []);
-    initializeStorage(STORAGE_KEYS.DOCUMENTS, []);
-    initializeStorage(STORAGE_KEYS.TIMELINE, []);
-    initializeStorage(STORAGE_KEYS.EMERGENCIES, []);
-    initializeStorage(STORAGE_KEYS.APPOINTMENTS, []);
-    initializeStorage(STORAGE_KEYS.CONSENTS, []);
-    initializeStorage(STORAGE_KEYS.AUDIT_LOGS, []);
-    initializeStorage(STORAGE_KEYS.NOTIFICATIONS, []);
+    initializeStorage(STORAGE_KEYS.SESSIONS, SEED_SESSIONS);
+    initializeStorage(STORAGE_KEYS.DOCUMENTS, SEED_DOCUMENTS);
+    initializeStorage(STORAGE_KEYS.TIMELINE, SEED_TIMELINE);
+    initializeStorage(STORAGE_KEYS.EMERGENCIES, SEED_EMERGENCIES);
+    initializeStorage(STORAGE_KEYS.APPOINTMENTS, SEED_APPOINTMENTS);
+    initializeStorage(STORAGE_KEYS.CONSENTS, SEED_CONSENTS);
+    initializeStorage(STORAGE_KEYS.AUDIT_LOGS, SEED_AUDIT_LOGS);
+    initializeStorage(STORAGE_KEYS.NOTIFICATIONS, SEED_NOTIFICATIONS);
   }
 
   private getItems<T>(key: string): T[] {
     try {
-      const data = localStorage.getItem(key);
+      const data = getStorageItem(key);
       return data ? JSON.parse(data) : [];
     } catch {
       return [];
@@ -440,12 +506,7 @@ export class MockDatabase {
   }
 
   private setItems<T>(key: string, items: T[]): void {
-    try {
-      localStorage.setItem(key, JSON.stringify(items));
-      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { key } }));
-    } catch (err) {
-      console.error(`Error saving to ${key}:`, err);
-    }
+    setStorageItem(key, JSON.stringify(items));
   }
 
   // Users & Profiles
@@ -528,17 +589,35 @@ export class MockDatabase {
     this.setItems(STORAGE_KEYS.DOCTORS, doctors);
   }
 
+  public generateUniqueHospitalId(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 5; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return `HOSP-2026-${code}`;
+  }
+
   public getPatientByUserId(userId: string): PatientProfile | undefined {
     return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(p => p.userId === userId);
   }
 
   public getPatientById(id: string): PatientProfile | undefined {
-    return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(p => p.id === id);
+    if (!id) return undefined;
+    const clean = id.trim();
+    return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(
+      p => p.id === clean || (p.patientId && p.patientId.toUpperCase() === clean.toUpperCase()) || p.userId === clean
+    );
   }
 
   public getPatientByPatientId(patientId: string): PatientProfile | undefined {
+    if (!patientId) return undefined;
+    const clean = patientId.trim().toUpperCase();
     return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(
-      p => p.patientId && p.patientId.toUpperCase() === patientId.trim().toUpperCase()
+      p => (p.patientId && p.patientId.trim().toUpperCase() === clean) ||
+           (p.id && p.id.trim().toUpperCase() === clean) ||
+           (p.userId && p.userId.trim().toUpperCase() === clean) ||
+           (p.abhaId && p.abhaId.trim().toUpperCase() === clean)
     );
   }
 
@@ -551,16 +630,40 @@ export class MockDatabase {
   }
 
   public getHospitalById(id: string): Hospital | undefined {
-    return this.getHospitals().find(h => h.id === id);
+    if (!id) return undefined;
+    const clean = id.trim().toLowerCase();
+    return this.getHospitals().find(h =>
+      h.id.toLowerCase() === clean ||
+      (h.code && h.code.toLowerCase() === clean) ||
+      (h.registrationNumber && h.registrationNumber.toLowerCase() === clean)
+    );
   }
 
-  // Hospital Accounts (portal login entities)
+  public createHospital(hospital: Hospital): void {
+    const hospitals = this.getHospitals();
+    const existingIdx = hospitals.findIndex(h => h.id === hospital.id || h.code === hospital.code);
+    if (existingIdx >= 0) {
+      hospitals[existingIdx] = { ...hospitals[existingIdx], ...hospital };
+    } else {
+      hospitals.unshift(hospital);
+    }
+    this.setItems(STORAGE_KEYS.HOSPITALS, hospitals);
+  }
+
+  // Hospital Accounts (portal login entities — kept in sync with Hospital registry)
   public getHospitalAccounts(): HospitalAccount[] {
     return this.getItems<HospitalAccount>(STORAGE_KEYS.HOSPITAL_ACCOUNTS);
   }
 
   public getHospitalAccountById(id: string): HospitalAccount | undefined {
-    return this.getHospitalAccounts().find(h => h.id === id);
+    if (!id) return undefined;
+    const clean = id.trim().toLowerCase();
+    return this.getHospitalAccounts().find(h =>
+      h.id.toLowerCase() === clean ||
+      (h.linkedHospitalId && h.linkedHospitalId.toLowerCase() === clean) ||
+      (h.userId && h.userId.toLowerCase() === clean) ||
+      (h.registrationId && h.registrationId.toLowerCase() === clean)
+    );
   }
 
   public getHospitalAccountByUserId(userId: string): HospitalAccount | undefined {
@@ -576,17 +679,51 @@ export class MockDatabase {
       accounts.unshift(account);
     }
     this.setItems(STORAGE_KEYS.HOSPITAL_ACCOUNTS, accounts);
+
+    // Simultaneously ensure the single shared hospital registry (HOSPITALS) has this registered record
+    const hospitalRecord: Hospital = {
+      id: account.id,
+      name: account.hospitalName,
+      code: account.registrationId || account.id,
+      registrationNumber: account.registrationId,
+      email: account.email,
+      phone: account.emergencyContact,
+      address: account.address,
+      city: account.city,
+      state: 'Maharashtra',
+      pincode: '410507',
+      emergencyPhone: account.emergencyContact,
+      coordinates: account.coordinates || { lat: 18.7303, lng: 73.6766 },
+      emergencyCapacityTotal: 30,
+      emergencyCapacityOccupied: 10,
+      icuBedsAvailable: 8,
+      generalBedsAvailable: 25,
+      ambulanceAvailable: account.ambulanceAvailable,
+      isRegisteredMediBridge: true,
+      verificationStatus: 'ABDM_REGISTERED',
+      departments: account.departments || ['Emergency & Trauma', 'General Medicine'],
+      createdAt: account.createdAt || new Date().toISOString()
+    };
+    this.createHospital(hospitalRecord);
   }
 
   // Trusted Hospitals — patient data-sharing control
-  public getTrustedHospitals(patientId: string): TrustedHospital[] {
+  public getTrustedHospitals(patientIdOrCode?: string): TrustedHospital[] {
     const all = this.getItems<TrustedHospital>(STORAGE_KEYS.TRUSTED_HOSPITALS);
-    return all.filter(t => t.patientId === patientId || t.patientProfileId === patientId);
+    if (!patientIdOrCode) return all;
+    const clean = patientIdOrCode.trim().toUpperCase();
+    const profile = this.getPatientByPatientId(clean) || this.getPatientById(patientIdOrCode);
+    const validIds = new Set<string>([patientIdOrCode, clean]);
+    if (profile) {
+      if (profile.id) validIds.add(profile.id);
+      if (profile.patientId) validIds.add(profile.patientId.toUpperCase());
+    }
+    return all.filter(t => validIds.has(t.patientId) || validIds.has(t.patientProfileId) || (t.patientId && validIds.has(t.patientId.toUpperCase())));
   }
 
   public saveTrustedHospital(record: TrustedHospital): void {
     const all = this.getItems<TrustedHospital>(STORAGE_KEYS.TRUSTED_HOSPITALS);
-    const existingIdx = all.findIndex(t => t.id === record.id);
+    const existingIdx = all.findIndex(t => t.id === record.id || (t.patientId === record.patientId && t.hospitalId === record.hospitalId));
     if (existingIdx >= 0) {
       all[existingIdx] = { ...all[existingIdx], ...record };
     } else {
@@ -617,18 +754,70 @@ export class MockDatabase {
   }
 
   /**
+   * isHospitalAuthorizedForPatient — checks if patient has granted active medical data sharing permission to this hospital.
+   */
+  public isHospitalAuthorizedForPatient(hospitalIdentifier: string, patientIdentifier: string): boolean {
+    if (!hospitalIdentifier || !patientIdentifier) return false;
+    const cleanHosp = hospitalIdentifier.trim().toLowerCase();
+    const hospRecord = this.getHospitalById(hospitalIdentifier) || this.getHospitalAccountById(hospitalIdentifier);
+    const validHospIds = new Set<string>([cleanHosp]);
+    if (hospRecord) {
+      validHospIds.add(hospRecord.id.toLowerCase());
+      if ('code' in hospRecord && hospRecord.code) validHospIds.add(hospRecord.code.toLowerCase());
+      if ('registrationId' in hospRecord && hospRecord.registrationId) validHospIds.add(hospRecord.registrationId.toLowerCase());
+      if ('linkedHospitalId' in hospRecord && hospRecord.linkedHospitalId) validHospIds.add(hospRecord.linkedHospitalId.toLowerCase());
+      if ('userId' in hospRecord && hospRecord.userId) validHospIds.add(hospRecord.userId.toLowerCase());
+      if ('name' in hospRecord && hospRecord.name) validHospIds.add(hospRecord.name.toLowerCase());
+      if ('hospitalName' in hospRecord && hospRecord.hospitalName) validHospIds.add(hospRecord.hospitalName.toLowerCase());
+    }
+
+    const trustedList = this.getTrustedHospitals(patientIdentifier);
+    return trustedList.some(t => {
+      if (t.status !== 'ACTIVE') return false;
+      if (t.allowMedicalHistory === false) return false;
+      const tHospId = (t.hospitalId || '').toLowerCase();
+      const tHospName = (t.hospitalName || '').toLowerCase();
+      return validHospIds.has(tHospId) || validHospIds.has(tHospName);
+    });
+  }
+
+  /**
    * getAuthorizedPatients — returns all patients who have ACTIVE data sharing with a given hospital.
    * Used by hospital dashboard to enforce access control.
    */
   public getAuthorizedPatients(hospitalAccountId: string): { profile: PatientProfile; user: User; trustedRecord: TrustedHospital }[] {
     const allTrusted = this.getItems<TrustedHospital>(STORAGE_KEYS.TRUSTED_HOSPITALS);
-    const active = allTrusted.filter(t => t.hospitalId === hospitalAccountId && t.status === 'ACTIVE');
+    const hosp = this.getHospitalAccountById(hospitalAccountId) || this.getHospitalById(hospitalAccountId);
+    const validHospIds = new Set<string>([hospitalAccountId.toLowerCase()]);
+    if (hosp) {
+      validHospIds.add(hosp.id.toLowerCase());
+      if ('linkedHospitalId' in hosp && hosp.linkedHospitalId) validHospIds.add(hosp.linkedHospitalId.toLowerCase());
+      if ('userId' in hosp && hosp.userId) validHospIds.add(hosp.userId.toLowerCase());
+      if ('name' in hosp && hosp.name) validHospIds.add(hosp.name.toLowerCase());
+      if ('hospitalName' in hosp && hosp.hospitalName) validHospIds.add(hosp.hospitalName.toLowerCase());
+    }
+
+    const active = allTrusted.filter(t => t.status === 'ACTIVE' && (
+      validHospIds.has((t.hospitalId || '').toLowerCase()) ||
+      validHospIds.has((t.hospitalName || '').toLowerCase())
+    ));
+
     const result: { profile: PatientProfile; user: User; trustedRecord: TrustedHospital }[] = [];
+    const seenPatientIds = new Set<string>();
+
     for (const record of active) {
       const profile = this.getPatientByPatientId(record.patientId) || this.getPatientById(record.patientProfileId);
-      if (profile) {
-        const user = this.getUserById(profile.userId);
-        if (user) result.push({ profile, user, trustedRecord: record });
+      if (profile && !seenPatientIds.has(profile.id)) {
+        seenPatientIds.add(profile.id);
+        const user = this.getUserById(profile.userId) || {
+          id: profile.userId,
+          email: profile.patientId.toLowerCase() + '@patient.medibridge.in',
+          phone: profile.emergencyContactPhone || '+91 98000 00000',
+          fullName: profile.fullName || 'Registered Patient',
+          role: 'PATIENT',
+          createdAt: new Date().toISOString()
+        };
+        result.push({ profile, user, trustedRecord: record });
       }
     }
     return result;

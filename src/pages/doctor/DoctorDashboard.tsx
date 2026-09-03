@@ -96,13 +96,9 @@ export const DoctorDashboard: React.FC = () => {
     const patientDocs = db.getDocuments(patient.patientId);
     const patientTimeline = db.getTimeline(patient.patientId);
 
-    // Check ABDM Consent
-    const consents = db.getConsents(patient.id);
-    const activeConsent = consents.find(c => c.status === 'ACTIVE');
-    const latestSession = patientSessions[0];
-
-    // Check if consent active or if red flag emergency applies or if patient registered in this session
-    const isAuthorized = true; // Auto-authorized for hospital doctor access
+    // Check ABDM Consent / Trusted Hospital Authorization
+    const doctorHospitalId = doctorProfile?.hospitalId || 'HOSP-2026-00101';
+    const isAuthorized = db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
 
     setSearchResult({
       found: true,
@@ -113,6 +109,7 @@ export const DoctorDashboard: React.FC = () => {
       timeline: patientTimeline
     });
 
+    const latestSession = patientSessions[0];
     if (latestSession) {
       setSelectedSession(latestSession);
     }

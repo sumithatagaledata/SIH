@@ -5,7 +5,7 @@ import {
   Siren, Clock, Sparkles, HeartPulse, Stethoscope, ChevronRight,
   Plus, RefreshCw, Send, Check, Eye, Filter, ArrowUpRight,
   SlidersHorizontal, Download, FileSpreadsheet, Zap, Radio,
-  Shield, CheckCheck, Trash2, Edit3, XCircle
+  Shield, CheckCheck, Trash2, Edit3, XCircle, Lock, ShieldAlert
 } from 'lucide-react';
 import { db } from '../../services/mockDatabase';
 import { useAuth } from '../../context/AuthContext';
@@ -58,16 +58,19 @@ export const HospitalPortalSuite: React.FC = () => {
   // ==========================================
   const [patientIdInput, setPatientIdInput] = useState('');
   const [verifiedPatient, setVerifiedPatient] = useState<{
-    profile: PatientProfile;
-    sessions: ClinicalSession[];
-    documents: MedicalDocument[];
-    consents: any[];
+    status: 'AUTHORIZED' | 'UNAUTHORIZED' | 'NOT_FOUND';
+    profile?: PatientProfile;
+    sessions?: ClinicalSession[];
+    documents?: MedicalDocument[];
+    consents?: any[];
+    searchId?: string;
+    isBreakGlass?: boolean;
   } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [admissionType, setAdmissionType] = useState<'OPD' | 'EMERGENCY' | 'ICU' | 'DAYCARE'>('EMERGENCY');
   const [admissionDept, setAdmissionDept] = useState('Emergency Medicine / Trauma');
 
-  const handleVerifyPatient = async (targetId: string) => {
+  const handleVerifyPatient = async (targetId: string, forceBreakGlass: boolean = false) => {
     const idToSearch = (targetId || patientIdInput).trim().toUpperCase();
     if (!idToSearch) {
       showToast('⚠️ Input Required', 'Please enter a Patient Unique ID to verify.', 'INFO');
@@ -81,8 +84,25 @@ export const HospitalPortalSuite: React.FC = () => {
 
     if (!patient) {
       setIsVerifying(false);
-      setVerifiedPatient(null);
-      showToast('❌ Not Found', `No patient record found matching "${idToSearch}".`, 'INFO');
+      setVerifiedPatient({
+        status: 'NOT_FOUND',
+        searchId: idToSearch
+      });
+      showToast('❌ Not Found', `No patient record found matching "${idToSearch}". Please verify the Patient ID and try again.`, 'INFO');
+      return;
+    }
+
+    const currentHospitalId = hospitalAccount?.id || currentUser?.id || 'HOSP-2026-00101';
+    const isAuthorized = forceBreakGlass || db.isHospitalAuthorizedForPatient(currentHospitalId, patient.patientId);
+
+    if (!isAuthorized) {
+      setIsVerifying(false);
+      setVerifiedPatient({
+        status: 'UNAUTHORIZED',
+        profile: patient,
+        searchId: idToSearch
+      });
+      showToast('🔒 Access Restricted', 'This patient has not granted this hospital permission to access their medical records.', 'INFO');
       return;
     }
 
@@ -91,24 +111,29 @@ export const HospitalPortalSuite: React.FC = () => {
     const consents = db.getConsents(patient.id);
 
     setVerifiedPatient({
+      status: 'AUTHORIZED',
       profile: patient,
       sessions,
       documents,
-      consents
+      consents,
+      searchId: idToSearch,
+      isBreakGlass: forceBreakGlass
     });
 
     db.logAction(
       currentUser?.id || 'hosp-admin',
-      currentUser?.fullName || 'Hospital Reception',
+      currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Reception',
       'HOSPITAL_ADMIN',
       'RECORD_VIEWED',
       'PatientProfile',
       patient.id,
-      `Hospital verified Patient Unique ID: ${patient.patientId}`
+      forceBreakGlass
+        ? `Emergency Break-Glass access used to view Patient ID: ${patient.patientId}`
+        : `Hospital verified Patient Unique ID: ${patient.patientId}`
     );
 
     setIsVerifying(false);
-    showToast('✅ Patient Verified', `Retrieved complete ABDM record for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
+    showToast('✅ Patient Verified', `Retrieved authorized ABDM clinical record for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
   };
 
   const handleFastTrackAdmit = (patient: PatientProfile) => {
@@ -462,8 +487,66 @@ export const HospitalPortalSuite: React.FC = () => {
             </div>
           </div>
 
-          {/* Verified Patient Dossier */}
-          {verifiedPatient && (
+          {/* Result States */}
+          {verifiedPatient && verifiedPatient.status === 'NOT_FOUND' && (
+            <div className="p-8 bg-red-50 border border-red-200 rounded-3xl text-center space-y-3 animate-scale-up">
+              <XCircle className="w-12 h-12 text-red-500 mx-auto" />
+              <h4 className="text-base font-extrabold text-red-900">❌ Patient Not Found</h4>
+              <p className="text-xs text-red-700 max-w-md mx-auto">
+                No patient record found matching <strong>{verifiedPatient.searchId}</strong> in the shared registry. Please verify the Patient ID and try again.
+              </p>
+            </div>
+          )}
+
+          {verifiedPatient && verifiedPatient.status === 'UNAUTHORIZED' && verifiedPatient.profile && (
+            <div className="p-8 bg-amber-50 border border-amber-300 rounded-3xl space-y-5 animate-scale-up shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 flex-shrink-0">
+                  <Lock className="w-7 h-7" />
+                </div>
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-lg font-black text-amber-900">🔒 Access Restricted</h4>
+                    <span className="font-mono text-xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                      {verifiedPatient.profile.patientId}
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-900 font-medium leading-relaxed">
+                    This patient has <strong>not granted this hospital permission</strong> to access their medical records.
+                  </p>
+                  <p className="text-[11px] text-amber-700 leading-relaxed">
+                    Under patient data privacy controls, private medical histories, AI intake summaries, and clinical documents are protected until the patient adds this hospital to their <strong>Trusted Hospitals</strong> list.
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex flex-wrap items-center gap-3 border-t border-amber-200/80">
+                <button
+                  type="button"
+                  onClick={() => {
+                    showToast('📩 Access Request Sent', `Data-sharing consent request dispatched to Patient ${verifiedPatient.profile?.patientId}.`, 'INFO');
+                  }}
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Request Patient Access Consent</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleVerifyPatient(verifiedPatient.profile?.patientId || '', true)}
+                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>Emergency Break-Glass Override</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Authorized Verified Patient Dossier */}
+          {verifiedPatient && verifiedPatient.status === 'AUTHORIZED' && verifiedPatient.profile && (
             <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6 animate-scale-up">
               {/* Header Profile Bar */}
               <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
@@ -479,9 +562,15 @@ export const HospitalPortalSuite: React.FC = () => {
                       <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded border border-teal-200">
                         {verifiedPatient.profile.patientId}
                       </span>
-                      <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold uppercase flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> ABDM Consent Verified
-                      </span>
+                      {verifiedPatient.isBreakGlass ? (
+                        <span className="text-[10px] bg-red-100 text-red-800 border border-red-300 px-2.5 py-0.5 rounded-full font-bold uppercase flex items-center gap-1">
+                          <ShieldAlert className="w-3.5 h-3.5 text-red-600" /> Emergency Break-Glass Active
+                        </span>
+                      ) : (
+                        <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold uppercase flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Patient Consent Granted
+                        </span>
+                      )}
                     </div>
 
                     <p className="text-xs text-slate-600">
@@ -492,7 +581,7 @@ export const HospitalPortalSuite: React.FC = () => {
                     </p>
 
                     <p className="text-[11px] text-slate-500">
-                      Emergency Contact: <strong className="text-slate-700">{verifiedPatient.profile.emergencyContactName || 'Rahul Sharma'}</strong> ({verifiedPatient.profile.emergencyContactPhone || '+91 98230 44812'})
+                      Emergency Contact: <strong className="text-slate-700">{verifiedPatient.profile.emergencyContactName || 'Family Member'}</strong> ({verifiedPatient.profile.emergencyContactPhone || '+91 98230 44812'})
                     </p>
                   </div>
                 </div>
@@ -527,7 +616,7 @@ export const HospitalPortalSuite: React.FC = () => {
                   </div>
 
                   <button
-                    onClick={() => handleFastTrackAdmit(verifiedPatient.profile)}
+                    onClick={() => handleFastTrackAdmit(verifiedPatient.profile!)}
                     className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-600/20 flex items-center justify-center gap-1.5 transition"
                   >
                     <Zap className="w-3.5 h-3.5" />
@@ -551,8 +640,8 @@ export const HospitalPortalSuite: React.FC = () => {
                         </span>
                       ))
                     ) : (
-                      <span className="text-xs bg-white text-red-800 border border-red-200 px-2 py-0.5 rounded-lg font-medium">
-                        ⚠️ Penicillin, Sulfa Drugs
+                      <span className="text-xs bg-white text-slate-600 border border-slate-200 px-2 py-0.5 rounded-lg font-medium">
+                        No known drug allergies reported
                       </span>
                     )}
                   </div>
@@ -560,73 +649,110 @@ export const HospitalPortalSuite: React.FC = () => {
 
                 <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-2xl space-y-2">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
-                    <HeartPulse className="w-4 h-4 text-amber-600" />
-                    <span>Chronic Medical Conditions</span>
+                    <Activity className="w-4 h-4 text-amber-600" />
+                    <span>Chronic Conditions</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {verifiedPatient.profile.chronicConditions && verifiedPatient.profile.chronicConditions.length > 0 ? (
                       verifiedPatient.profile.chronicConditions.map((c, i) => (
-                        <span key={i} className="text-xs bg-white text-amber-900 border border-amber-300 font-medium px-2 py-0.5 rounded-lg shadow-sm">
+                        <span key={i} className="text-xs bg-white text-amber-900 border border-amber-200 px-2 py-0.5 rounded-lg font-bold shadow-sm">
                           {c}
                         </span>
                       ))
                     ) : (
-                      <span className="text-xs bg-white text-amber-900 border border-amber-200 px-2 py-0.5 rounded-lg font-medium">
-                        Moderate Asthma, Hypertension (Stage 1)
+                      <span className="text-xs bg-white text-slate-600 border border-slate-200 px-2 py-0.5 rounded-lg font-medium">
+                        None recorded
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="p-4 bg-teal-50/70 border border-teal-200 rounded-2xl space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-teal-900">
-                    <Activity className="w-4 h-4 text-teal-600" />
-                    <span>Active Daily Medications</span>
+                <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
+                    <HeartPulse className="w-4 h-4 text-blue-600" />
+                    <span>Current Medications</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {verifiedPatient.profile.currentMedications && verifiedPatient.profile.currentMedications.length > 0 ? (
                       verifiedPatient.profile.currentMedications.map((m, i) => (
-                        <span key={i} className="text-xs bg-white text-teal-900 border border-teal-300 font-medium px-2 py-0.5 rounded-lg shadow-sm">
+                        <span key={i} className="text-xs bg-white text-blue-900 border border-blue-200 px-2 py-0.5 rounded-lg font-medium shadow-sm">
                           💊 {m}
                         </span>
                       ))
                     ) : (
-                      <span className="text-xs bg-white text-teal-900 border border-teal-200 px-2 py-0.5 rounded-lg font-medium">
-                        💊 Salbutamol Inhaler PRN, Amlodipine 5mg
+                      <span className="text-xs bg-white text-slate-600 border border-slate-200 px-2 py-0.5 rounded-lg font-medium">
+                        None active
                       </span>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Uploaded Diagnostic Reports Section */}
-              <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+              {/* Latest AI Clinical Intake History */}
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-teal-600" />
-                    <h5 className="font-bold text-slate-900 text-xs">
-                      Available Medical Scans &amp; Lab Records ({verifiedPatient.documents.length})
-                    </h5>
-                  </div>
-                  <span className="text-[10px] text-slate-500 font-mono">HIPAA / ABDM Cloud</span>
+                  <h5 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-teal-600" />
+                    <span>AI Intake Clinical Summaries ({verifiedPatient.sessions?.length || 0})</span>
+                  </h5>
                 </div>
 
-                {verifiedPatient.documents.length === 0 ? (
-                  <p className="text-xs text-slate-500 italic py-2">No uploaded scans available on record.</p>
+                {(!verifiedPatient.sessions || verifiedPatient.sessions.length === 0) ? (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
+                    No previous clinical intake sessions recorded for this patient.
+                  </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {verifiedPatient.documents.map(d => (
-                      <div key={d.id} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-1.5 shadow-sm">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] font-bold uppercase bg-teal-50 text-teal-800 border border-teal-200 px-1.5 py-0.5 rounded">
-                            {d.fileType.replace('_', ' ')}
+                  <div className="space-y-3">
+                    {verifiedPatient.sessions.slice(0, 3).map(ses => (
+                      <div key={ses.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            ses.triagePriority === 'RED' ? 'bg-red-100 text-red-800 border-red-200' :
+                            ses.triagePriority === 'ORANGE' ? 'bg-amber-100 text-amber-800 border-amber-200' :
+                            'bg-teal-100 text-teal-800 border-teal-200'
+                          }`}>
+                            Triage Priority: {ses.triagePriority}
                           </span>
-                          <span className="text-[10px] text-slate-500">
-                            {new Date(d.uploadDate).toLocaleDateString()}
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {new Date(ses.startedAt).toLocaleString()}
                           </span>
                         </div>
+                        <p className="text-xs text-slate-800 font-medium">
+                          <strong>Chief Complaint:</strong> {ses.chiefComplaint}
+                        </p>
+                        {ses.aiSummary && (
+                          <div className="text-[11px] text-slate-600 bg-white p-3 rounded-xl border border-slate-200 space-y-1">
+                            <p className="font-semibold text-teal-800">History of Present Illness:</p>
+                            <p className="whitespace-pre-line leading-relaxed">{ses.aiSummary.historyOfPresentIllness}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Uploaded Reports & Documents */}
+              <div className="space-y-3">
+                <h5 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-blue-600" />
+                  <span>Uploaded Documents &amp; Reports ({verifiedPatient.documents?.length || 0})</span>
+                </h5>
+
+                {(!verifiedPatient.documents || verifiedPatient.documents.length === 0) ? (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
+                    No medical documents uploaded yet.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {verifiedPatient.documents.map(d => (
+                      <div key={d.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span className="font-bold text-blue-700">{d.fileType.replace(/_/g, ' ')}</span>
+                          <span>{new Date(d.uploadDate).toLocaleDateString()}</span>
+                        </div>
                         <h6 className="font-bold text-xs text-slate-900 line-clamp-1">{d.fileName}</h6>
-                        <p className="text-[10px] text-slate-500">{d.extractedData?.facilityName || 'Diagnostic Center'}</p>
+                        <p className="text-[10px] text-slate-500">{d.extractedData?.facilityName || 'Diagnostic Report'}</p>
                       </div>
                     ))}
                   </div>

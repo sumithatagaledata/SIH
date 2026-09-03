@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole, PatientProfile, DoctorProfile, HospitalAccount, LanguageCode } from '../types';
 import { db } from '../services/mockDatabase';
+import { LocationHospitalService } from '../services/locationHospitalService';
 
 export interface RegisterPatientData {
   fullName: string;
@@ -37,10 +38,13 @@ export interface RegisterHospitalData {
   address: string;
   city: string;
   location: string;
+  state?: string;
+  pincode?: string;
   emergencyContact: string;
   email: string;
   password: string;
   ambulanceAvailable: boolean;
+  coordinates?: { lat: number; lng: number };
   departments?: string[];
 }
 
@@ -341,7 +345,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  // Register New Hospital (Portal Account)
+  // Register New Hospital (Portal Account & Shared Hospital Registry)
   const registerHospital = async (data: RegisterHospitalData): Promise<{ success: boolean; hospitalId?: string; message?: string }> => {
     const existing = db.findUserByEmail(data.email);
     if (existing) {
@@ -349,7 +353,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const userId = `usr-hosp-${Date.now()}`;
-    const hospitalAccountId = `hacct-${Date.now()}`;
+    const hospitalId = db.generateUniqueHospitalId(); // e.g. HOSP-2026-XXXXX
+
+    // Resolve coordinates if not provided directly
+    let coords = data.coordinates;
+    if (!coords || (coords.lat === 0 && coords.lng === 0)) {
+      const query = `${data.address} ${data.location} ${data.city} ${data.pincode || ''}`.trim();
+      const geocoded = await LocationHospitalService.geocodeHospitalLocation(query);
+      coords = { lat: geocoded.lat, lng: geocoded.lng };
+    }
 
     const newUser: User = {
       id: userId,
@@ -363,7 +375,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     db.createUser(newUser);
 
     const newHospitalAccount: HospitalAccount = {
-      id: hospitalAccountId,
+      id: hospitalId,
       userId: userId,
       hospitalName: data.hospitalName.trim(),
       registrationId: data.registrationId.trim(),
@@ -373,7 +385,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       emergencyContact: data.emergencyContact.trim(),
       email: data.email.trim().toLowerCase(),
       ambulanceAvailable: data.ambulanceAvailable,
-      departments: data.departments || ['General Medicine', 'Emergency'],
+      coordinates: coords,
+      departments: data.departments || ['Emergency & Trauma', 'General Medicine', 'Cardiology', 'ICU'],
+      linkedHospitalId: hospitalId,
       createdAt: new Date().toISOString()
     };
     db.createHospitalAccount(newHospitalAccount);
@@ -388,11 +402,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       'HOSPITAL_ADMIN',
       'LOGIN',
       'HospitalAccount',
-      hospitalAccountId,
-      `Hospital registered: ${data.hospitalName} (${data.registrationId})`
+      hospitalId,
+      `Hospital registered: ${data.hospitalName} (Unique ID: ${hospitalId}, Reg: ${data.registrationId})`
     );
 
-    return { success: true, hospitalId: hospitalAccountId };
+    return { success: true, hospitalId: hospitalId };
   };
 
   // Switch role while in active session

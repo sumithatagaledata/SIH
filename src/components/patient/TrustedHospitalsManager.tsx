@@ -50,19 +50,20 @@ export const TrustedHospitalsManager: React.FC = () => {
     setTrustedList(db.getTrustedHospitals(patientId || patientProfileId));
   }, [patientId, patientProfileId]);
 
-  // Execute real API fetch whenever location, radius, or search query changes
+  // Execute combined discovery (MediBridge Registered + Real OSM Places)
   const executeRealApiFetch = useCallback(async (coords: { lat: number; lng: number }, radius: number, query: string) => {
     setIsApiLoading(true);
     setApiError(null);
     try {
-      const results = await LocationHospitalService.fetchRealHospitalsFromApi(coords, radius, query);
+      const results = await LocationHospitalService.getCombinedNearbyHospitals(coords, radius, query);
       setRealHospitals(results);
       if (results.length === 0) {
-        setApiError(`No real hospitals found within ${radius === 9999 ? 'all distances' : radius + ' km'}. Try increasing radius or changing locality.`);
+        setApiError(`No hospitals found within ${radius === 9999 ? 'all distances' : radius + ' km'}. Try increasing radius or changing locality.`);
       }
     } catch {
-      setApiError('Hospital Places API network error. Please check internet connection.');
-      setRealHospitals([]);
+      setApiError('Hospital discovery API offline. Retrying with local registry...');
+      const fallback = await LocationHospitalService.getCombinedNearbyHospitals(coords, 9999, query);
+      setRealHospitals(fallback);
     } finally {
       setIsApiLoading(false);
     }
@@ -140,7 +141,7 @@ export const TrustedHospitalsManager: React.FC = () => {
     setLoadingId(hospital.id);
     await new Promise(r => setTimeout(r, 600));
 
-    const pId = patientProfileId || patientId || (currentUser ? `pat-${currentUser.id}` : 'pat-demo');
+    const pId = patientProfile?.patientId || patientId || (currentUser ? `pat-${currentUser.id}` : 'pat-demo');
     const existing = trustedList.find(t => t.hospitalId === hospital.id);
 
     if (existing) {
@@ -153,7 +154,7 @@ export const TrustedHospitalsManager: React.FC = () => {
       const newTrusted: TrustedHospital = {
         id: `trust-${Date.now()}`,
         patientId: pId,
-        patientProfileId: pId,
+        patientProfileId: patientProfile?.id || pId,
         hospitalId: hospital.id,
         hospitalName: hospital.hospitalName,
         hospitalAddress: hospital.address,
@@ -163,7 +164,8 @@ export const TrustedHospitalsManager: React.FC = () => {
         allowEmergencyAlert: true,
         allowMedicalHistory: true,
         distanceKm: hospital.distanceKm,
-        emergencyContact: hospital.emergencyContact
+        emergencyContact: hospital.emergencyContact,
+        ambulanceAvailable: hospital.ambulanceAvailable
       };
       db.saveTrustedHospital(newTrusted);
 
@@ -183,7 +185,7 @@ export const TrustedHospitalsManager: React.FC = () => {
 
       db.logAction(currentUser?.id || 'usr', currentUser?.fullName || 'Patient', 'PATIENT',
         'CONSENT_GRANTED', 'TrustedHospital', newTrusted.id,
-        `Patient registered with ${hospital.hospitalName} with Unique ID ${pId}`);
+        `Patient granted data access to ${hospital.hospitalName} with Patient Unique ID ${pId}`);
       showToast('🟢 Registered with Hospital', `Your Unique ID ${pId} has been linked with ${hospital.hospitalName}.`, 'VERIFICATION');
       
       // Set registered hospital for modal display
@@ -582,10 +584,19 @@ export const TrustedHospitalsManager: React.FC = () => {
                       <div className="flex-1 space-y-1.5">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-extrabold text-slate-900 text-base">{hospital.hospitalName}</span>
+                          {hospital.isRegisteredMediBridge ? (
+                            <span className="text-[10px] font-bold bg-teal-100 text-teal-900 border border-teal-300 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                              <CheckCircle2 className="w-3 h-3 text-teal-700" /> MediBridge Registered Hospital
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded-full">
+                              Real Nearby Facility
+                            </span>
+                          )}
                           <span className="text-xs font-bold font-mono bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full shadow-sm">
                             📍 {hospital.distanceKm} km away
                           </span>
-                          <span className="text-[9px] font-bold bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 rounded uppercase font-mono">
+                          <span className="text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-300 px-2 py-0.5 rounded uppercase font-mono">
                             ID: {hospital.id}
                           </span>
                         </div>
