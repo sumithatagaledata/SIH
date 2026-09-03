@@ -267,6 +267,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       patientId: generatedPatientId,
       abhaId: `91-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`,
       abhaAddress: `${data.fullName.toLowerCase().replace(/\s+/g, '.') || 'patient'}@abdm`,
+      fullName: data.fullName.trim(),
+      email: data.email.trim().toLowerCase(),
+      phone: data.phone,
       dob: data.dob || '1990-01-01',
       age: calculatedAge,
       gender: data.gender,
@@ -276,7 +279,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       emergencyContactRelation: data.emergencyContactRelation || 'Next of Kin',
       address: data.address || 'Registered Residential Address',
       city: data.city || 'Mumbai',
-      pincode: data.pincode || '400001'
+      pincode: data.pincode || '400001',
+      createdAt: new Date().toISOString()
     };
     
     // Persist to Cloud Database Service

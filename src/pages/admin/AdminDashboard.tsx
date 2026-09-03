@@ -64,6 +64,50 @@ export const AdminDashboard: React.FC = () => {
     };
   }, []);
 
+  // When a patient is selected, fetch full profile from persistent database
+  const handleSelectPatient = async (patientItem: any) => {
+    const pId = patientItem.patientId || patientItem.id;
+    try {
+      const fullProfile = await cloudDataService.findPatientByPatientId(pId);
+      setSelectedPatient(fullProfile || patientItem);
+    } catch {
+      setSelectedPatient(patientItem);
+    }
+    setSelectedHospital(null);
+  };
+
+  // Direct search by Patient ID
+  const handleSearchPatientSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const query = patientSearch.trim();
+    if (!query) return;
+
+    // Check if matching in currently loaded list
+    const found = patients.find(p => 
+      p.patientId?.toUpperCase() === query.toUpperCase() ||
+      p.fullName?.toLowerCase() === query.toLowerCase() ||
+      p.id?.toUpperCase() === query.toUpperCase()
+    );
+
+    if (found) {
+      handleSelectPatient(found);
+      return;
+    }
+
+    // Otherwise query database directly
+    try {
+      const result = await cloudDataService.findPatientByPatientId(query);
+      if (result) {
+        setSelectedPatient(result);
+        setSelectedHospital(null);
+        // Refresh list
+        loadAdminData();
+      }
+    } catch (err) {
+      console.error('[Admin Patient Search Error]', err);
+    }
+  };
+
   // When a hospital is selected, calculate all patients associated with that hospital
   const handleSelectHospital = (hospital: any) => {
     setSelectedHospital(hospital);
@@ -267,19 +311,24 @@ export const AdminDashboard: React.FC = () => {
                 Total Registered: <strong className="text-slate-900 font-mono">{patients.length}</strong> • Click any patient row to open full medical profile.
               </p>
             </div>
-
-            {patients.length > 0 && (
-              <div className="w-full sm:w-72 relative">
+            <div className="w-full sm:w-80">
+              <form onSubmit={handleSearchPatientSubmit} className="relative">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={patientSearch}
                   onChange={e => setPatientSearch(e.target.value)}
-                  placeholder="Search patient name, ID, city..."
-                  className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-teal-500"
+                  placeholder="Search Patient ID (e.g. MB-2026-...), Name, City..."
+                  className="w-full pl-9 pr-20 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-teal-500"
                 />
-              </div>
-            )}
+                <button
+                  type="submit"
+                  className="absolute right-1 top-1 bottom-1 px-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[10px] font-bold transition"
+                >
+                  Search
+                </button>
+              </form>
+            </div>
           </div>
 
           {patients.length === 0 ? (
@@ -288,8 +337,17 @@ export const AdminDashboard: React.FC = () => {
               <h4 className="font-bold text-slate-700 text-sm">No registered patients found.</h4>
             </div>
           ) : filteredPatients.length === 0 ? (
-            <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200">
-              No registered patients match your search criteria.
+            <div className="p-8 text-center space-y-3 bg-slate-50 rounded-2xl border border-slate-200">
+              <p className="text-xs text-slate-600">
+                No loaded patients match "<strong>{patientSearch}</strong>".
+              </p>
+              <button
+                type="button"
+                onClick={() => handleSearchPatientSubmit()}
+                className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-sm transition"
+              >
+                Search Database for "{patientSearch}"
+              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -308,10 +366,7 @@ export const AdminDashboard: React.FC = () => {
                   {filteredPatients.map(p => (
                     <tr
                       key={p.id || p.patientId}
-                      onClick={() => {
-                        setSelectedPatient(p);
-                        setSelectedHospital(null);
-                      }}
+                      onClick={() => handleSelectPatient(p)}
                       className="hover:bg-teal-50/50 cursor-pointer transition"
                     >
                       <td className="py-3.5 px-3">
@@ -364,7 +419,7 @@ export const AdminDashboard: React.FC = () => {
                 <h3 className="font-extrabold text-slate-900 text-lg">Registered Hospitals</h3>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Total Registered: <strong className="text-slate-900 font-mono">{hospitals.length}</strong> • Click any hospital to view facility details &amp; its patients.
+                Total Registered: <strong className="text-slate-900 font-mono">{hospitals.length}</strong> • Click any hospital row to view verified details and associated patients.
               </p>
             </div>
 
@@ -401,7 +456,7 @@ export const AdminDashboard: React.FC = () => {
                     <th className="pb-3 px-3">Status</th>
                     <th className="pb-3 px-3">Location</th>
                     <th className="pb-3 px-3">Registered Date</th>
-                    <th className="pb-3 px-3 text-right">Patients &amp; Details</th>
+                    <th className="pb-3 px-3 text-right">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -462,10 +517,17 @@ export const AdminDashboard: React.FC = () => {
                   <Users className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-xl font-black text-slate-900">{selectedPatient.fullName}</h3>
-                  <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded border border-teal-200">
-                    Patient ID: {selectedPatient.patientId}
-                  </span>
+                  <h3 className="text-xl font-black text-slate-900">{selectedPatient.fullName || 'Registered Patient'}</h3>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded border border-teal-200">
+                      Patient ID: {selectedPatient.patientId}
+                    </span>
+                    {selectedPatient.abhaId && (
+                      <span className="font-mono text-xs font-bold text-blue-800 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                        ABHA: {selectedPatient.abhaId}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
@@ -481,7 +543,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">Age / Gender</span>
-                <span className="text-xs font-extrabold text-slate-900">{selectedPatient.age || 32} Yrs • {selectedPatient.gender || 'MALE'}</span>
+                <span className="text-xs font-extrabold text-slate-900">{selectedPatient.age || 35} Yrs • {selectedPatient.gender || 'MALE'}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">Blood Group</span>
@@ -489,7 +551,7 @@ export const AdminDashboard: React.FC = () => {
               </div>
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">City</span>
-                <span className="text-xs font-extrabold text-slate-900">{selectedPatient.city || 'Pune'}</span>
+                <span className="text-xs font-extrabold text-slate-900">{selectedPatient.city || 'Maharashtra'}</span>
               </div>
               <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block">Account Status</span>
@@ -504,8 +566,10 @@ export const AdminDashboard: React.FC = () => {
                 <span>Contact &amp; Emergency Details</span>
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                <div>Email: <strong className="text-slate-900">{selectedPatient.email || 'rohit@example.com'}</strong></div>
-                <div>Emergency Contact: <strong className="text-slate-900">{selectedPatient.phone || '+91 98220 54322'}</strong></div>
+                <div>Email: <strong className="text-slate-900">{selectedPatient.email || 'Registered on MediBridge'}</strong></div>
+                <div>Phone: <strong className="text-slate-900">{selectedPatient.phone || selectedPatient.emergencyContactPhone || 'Available'}</strong></div>
+                <div>Emergency Contact: <strong className="text-slate-900">{selectedPatient.emergencyContactName ? `${selectedPatient.emergencyContactName} (${selectedPatient.emergencyContactRelation || 'Relative'})` : 'Family Contact'}</strong></div>
+                <div>Address: <strong className="text-slate-900">{selectedPatient.address || selectedPatient.city || 'Maharashtra'}</strong></div>
               </div>
             </div>
 
@@ -525,7 +589,7 @@ export const AdminDashboard: React.FC = () => {
                 <div className="p-3 bg-blue-50 border border-blue-200 rounded-2xl text-xs space-y-1">
                   <span className="font-bold text-blue-900 block">Current Medications</span>
                   <p className="text-blue-800">
-                    {selectedPatient.currentMedications?.length ? selectedPatient.currentMedications.join(', ') : 'Standard Maintenance'}
+                    {selectedPatient.currentMedications?.length ? selectedPatient.currentMedications.join(', ') : 'None Reported'}
                   </p>
                 </div>
               </div>
