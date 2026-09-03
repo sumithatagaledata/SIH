@@ -434,6 +434,16 @@ const SEED_USERS: User[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80',
     createdAt: '2025-10-01T08:00:00Z'
   },
+  {
+    id: 'usr-admin-02',
+    email: 'admin@medibridge.ai',
+    password: 'Admin@123',
+    phone: '+91 99300 88777',
+    fullName: 'System Administrator',
+    role: 'ADMIN',
+    avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80',
+    createdAt: '2025-10-01T08:00:00Z'
+  },
   // Seed hospital portal accounts
   {
     id: 'usr-hosp-01',

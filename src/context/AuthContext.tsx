@@ -426,22 +426,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true, hospitalId: hospitalId };
   };
 
-  // Switch role while in active session
-  const switchRole = (role: UserRole) => {
-    const allUsers = db.getUsers();
-    let targetUser = allUsers.find(u => u.role === role);
-    if (!targetUser) {
-      targetUser = {
-        id: `usr-${role.toLowerCase()}-${Date.now()}`,
-        email: `${role.toLowerCase()}@medibridge.ai`,
-        phone: '+91 99999 00000',
-        fullName: role === 'PATIENT' ? 'Registered Patient' : role === 'DOCTOR' ? 'Dr. Vikram Deshmukh, MD' : role === 'TRIAGE' ? 'Staff Nurse Sunita Rao (ER)' : 'Hospital Administrator',
-        role: role,
-        createdAt: new Date().toISOString()
-      };
-    }
-    setCurrentUser(targetUser);
-    setIsAuthenticated(true);
+  // Role switching is strictly disabled; role is determined solely by authenticated credentials
+  const switchRole = (_role: UserRole) => {
+    console.warn('[Security] Frontend role switching is disabled. Authenticated session governs role access.');
   };
 
   // Logout
