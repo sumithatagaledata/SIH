@@ -96,30 +96,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (currentUser && isAuthenticated) {
       if (currentUser.role === 'PATIENT') {
-        let p = db.getPatientByUserId(currentUser.id);
-        if (!p) {
-          // If no patient profile exists, create a default real one for this registered user
-          const uniqueId = db.generateUniquePatientId();
-          p = {
-            id: `pat-${currentUser.id}`,
-            userId: currentUser.id,
-            patientId: uniqueId,
-            abhaId: `91-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`,
-            abhaAddress: `${currentUser.fullName.toLowerCase().replace(/\s+/g, '.') || 'patient'}@abdm`,
-            dob: '1990-01-01',
-            age: 36,
-            gender: 'MALE',
-            bloodGroup: 'O+',
-            emergencyContactName: 'Family Contact',
-            emergencyContactPhone: currentUser.phone || '+91 98000 00000',
-            emergencyContactRelation: 'Relative',
-            address: 'Registered Residence',
-            city: 'Mumbai',
-            pincode: '400001'
-          };
-          db.createPatientProfile(p);
+        const p = db.getPatientByUserId(currentUser.id) || db.getPatientById(currentUser.id);
+        if (p) {
+          setPatientProfile(p);
+        } else {
+          cloudDataService.findPatientByPatientId(currentUser.email || currentUser.id).then(found => {
+            if (found) {
+              setPatientProfile(found);
+              db.createPatientProfile(found);
+            }
+          });
         }
-        setPatientProfile(p);
         setDoctorProfile(undefined);
         setHospitalAccount(undefined);
       } else if (currentUser.role === 'DOCTOR') {
@@ -168,14 +155,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [currentUser, isAuthenticated]);
 
-  // Real Email/Patient ID & Password Login
+  // Real Email/Patient ID & Password Login (Universal Cross-Device Resolution)
   const login = async (identifier: string, password?: string): Promise<{ success: boolean; message?: string }> => {
     const cleanId = identifier.trim();
     if (!cleanId) {
       return { success: false, message: 'Please enter your registered Email or Patient ID.' };
     }
 
-    const user = db.findUserByIdentifier(cleanId);
+    // 1. Resolve user and profile globally from central cloud database
+    const authData = await cloudDataService.findUserByIdentifier(cleanId);
+    const user = authData?.user || db.findUserByIdentifier(cleanId);
 
     if (!user) {
       return {
@@ -184,17 +173,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    // Verify password if stored on account
+    // 2. Verify password if stored on account
     if (user.password && password) {
       if (user.password.trim() !== password.trim()) {
         return { success: false, message: 'Incorrect password. Please check your password and try again.' };
       }
     }
 
-    // Load profile
+    // 3. Load profile
     if (user.role === 'PATIENT') {
-      const p = db.getPatientByUserId(user.id) || db.getPatientByPatientId(cleanId);
-      if (p) setPatientProfile(p);
+      const p = authData?.patient || db.getPatientByUserId(user.id) || db.getPatientByPatientId(cleanId);
+      if (p) {
+        setPatientProfile(p);
+        db.createPatientProfile(p);
+      }
       setDoctorProfile(undefined);
       setHospitalAccount(undefined);
     } else if (user.role === 'DOCTOR') {
@@ -203,12 +195,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setPatientProfile(undefined);
       setHospitalAccount(undefined);
     } else if (user.role === 'HOSPITAL_ADMIN' || user.role === 'HOSPITAL') {
-      const hacct = db.getHospitalAccountByUserId(user.id);
+      const hacct = authData?.hospitalAccount || db.getHospitalAccountByUserId(user.id);
       setHospitalAccount(hacct || undefined);
-      setPatientProfile(undefined);
-      setDoctorProfile(undefined);
-    } else if (user.role === 'ADMIN' || user.role === 'SYSTEM_ADMIN') {
-      setHospitalAccount(undefined);
       setPatientProfile(undefined);
       setDoctorProfile(undefined);
     } else {
@@ -218,6 +206,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setCurrentUser(user);
+    db.createUser(user);
     setIsAuthenticated(true);
 
     db.logAction(

@@ -202,6 +202,7 @@ class CloudDataService {
         id: patient.id,
         userId: user.id,
         patientId: cleanPatientId,
+        password: user.password,
         abhaId: patient.abhaId,
         abhaAddress: patient.abhaAddress,
         fullName: patient.fullName || user.fullName,
@@ -509,6 +510,57 @@ class CloudDataService {
         ambulanceAvailable: h.ambulanceAvailable
       };
     });
+  }
+
+  public async findUserByIdentifier(identifier: string): Promise<{ user: User; patient?: PatientProfile; hospitalAccount?: any } | undefined> {
+    if (!identifier) return undefined;
+    const cleanId = identifier.trim();
+
+    // 1. Check Cloud Database
+    const cloudRes = await cloudDb.findUserByIdentifier(cleanId);
+    if (cloudRes) {
+      const { user, patient, hospital } = cloudRes;
+      if (patient) {
+        const profile: PatientProfile = {
+          id: patient.id || `pat-${patient.patientId}`,
+          userId: user.id,
+          patientId: patient.patientId,
+          abhaId: patient.abhaId,
+          abhaAddress: patient.abhaAddress,
+          dob: patient.dob || '1990-01-01',
+          age: patient.age || 35,
+          gender: patient.gender as any || 'FEMALE',
+          bloodGroup: patient.bloodGroup || 'B+',
+          fullName: patient.fullName,
+          address: patient.address || '',
+          city: patient.city || '',
+          pincode: patient.pincode || '',
+          emergencyContactName: patient.emergencyContactName || 'Family',
+          emergencyContactPhone: patient.emergencyContactPhone || '',
+          emergencyContactRelation: patient.emergencyContactRelation || 'Next of Kin',
+          allergies: patient.allergies || [],
+          chronicConditions: patient.chronicConditions || [],
+          currentMedications: patient.currentMedications || []
+        };
+        db.createUser(user);
+        db.createPatientProfile(profile);
+        return { user, patient: profile };
+      }
+      if (hospital) {
+        db.createUser(user);
+        return { user, hospitalAccount: hospital };
+      }
+    }
+
+    // 2. Check local database
+    const localUser = db.findUserByIdentifier(cleanId);
+    if (localUser) {
+      const p = db.getPatientByUserId(localUser.id) || db.getPatientByPatientId(cleanId);
+      const h = db.getHospitalAccountByUserId(localUser.id);
+      return { user: localUser, patient: p, hospitalAccount: h };
+    }
+
+    return undefined;
   }
 
   public async findPatientByPatientId(patientId: string): Promise<PatientProfile | undefined> {

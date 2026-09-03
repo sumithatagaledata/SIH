@@ -5,6 +5,7 @@ export interface CloudPatientRecord {
   id: string;
   userId: string;
   patientId: string;
+  password?: string;
   abhaId?: string;
   abhaAddress?: string;
   fullName: string;
@@ -331,6 +332,50 @@ class CloudDatabaseEngine {
         }
       }
     } catch {}
+
+    return undefined;
+  }
+
+  public async findPatientByEmail(email: string): Promise<CloudPatientRecord | undefined> {
+    if (!email) return undefined;
+    const cleanEmail = email.trim().toLowerCase();
+    const all = await this.getPatients();
+    return all.find(p => (p.email || '').trim().toLowerCase() === cleanEmail);
+  }
+
+  public async findUserByIdentifier(identifier: string): Promise<{ user: any; patient?: CloudPatientRecord; hospital?: CloudHospitalRecord } | undefined> {
+    if (!identifier) return undefined;
+    const clean = identifier.trim();
+
+    // 1. Try finding patient by Patient ID, email, ABHA, phone
+    const patient = await this.findPatientById(clean) || await this.findPatientByEmail(clean);
+    if (patient) {
+      const user = {
+        id: patient.userId || `usr-${patient.patientId}`,
+        email: patient.email || `${patient.patientId.toLowerCase()}@patient.medibridge.in`,
+        password: patient.password,
+        phone: patient.phone || patient.emergencyContactPhone,
+        fullName: patient.fullName,
+        role: 'PATIENT',
+        createdAt: patient.createdAt
+      };
+      return { user, patient };
+    }
+
+    // 2. Try finding hospital account
+    const hospital = await this.findHospitalById(clean);
+    if (hospital) {
+      const user = {
+        id: hospital.userId || `usr-hosp-${hospital.hospitalId}`,
+        email: hospital.email || `admin@${(hospital.code || hospital.hospitalId).toLowerCase()}.in`,
+        password: 'Hospital@123',
+        phone: hospital.phone || hospital.emergencyContact,
+        fullName: hospital.hospitalName,
+        role: 'HOSPITAL_ADMIN',
+        createdAt: hospital.createdAt
+      };
+      return { user, hospital };
+    }
 
     return undefined;
   }

@@ -373,20 +373,57 @@ export class MockDatabase {
   }
 
   public findUserByEmail(email: string): User | undefined {
-    return this.getUsers().find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!email) return undefined;
+    const cleanEmail = email.trim().toLowerCase();
+    const local = this.getUsers().find(u => u.email.toLowerCase() === cleanEmail);
+    if (local) return local;
+
+    // Check patient profiles
+    const patients = this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS);
+    const pat = patients.find(p => (p.email || '').trim().toLowerCase() === cleanEmail);
+    if (pat) {
+      const user: User = {
+        id: pat.userId || `usr-${pat.patientId}`,
+        email: pat.email || cleanEmail,
+        password: (pat as any).password,
+        fullName: pat.fullName || 'Registered Patient',
+        phone: pat.phone || pat.emergencyContactPhone,
+        role: 'PATIENT',
+        createdAt: pat.createdAt || new Date().toISOString()
+      };
+      this.createUser(user);
+      return user;
+    }
+
+    return undefined;
   }
 
   public findUserByIdentifier(identifier: string): User | undefined {
+    if (!identifier) return undefined;
     const cleanId = identifier.trim();
+
     // 1. Match by email
-    const byEmail = this.getUsers().find(u => u.email.toLowerCase() === cleanId.toLowerCase());
+    const byEmail = this.findUserByEmail(cleanId);
     if (byEmail) return byEmail;
 
     // 2. Match by Patient ID
-    const patientProfile = this.getPatientByPatientId(cleanId);
+    const patientProfile = this.getPatientByPatientId(cleanId) || this.getPatientById(cleanId);
     if (patientProfile) {
       const user = this.getUserById(patientProfile.userId);
       if (user) return user;
+
+      // Construct user from patient profile
+      const synthesizedUser: User = {
+        id: patientProfile.userId || `usr-${patientProfile.patientId}`,
+        email: patientProfile.email || `${patientProfile.patientId.toLowerCase()}@patient.medibridge.in`,
+        password: (patientProfile as any).password,
+        fullName: patientProfile.fullName || 'Registered Patient',
+        phone: patientProfile.phone || patientProfile.emergencyContactPhone,
+        role: 'PATIENT',
+        createdAt: patientProfile.createdAt || new Date().toISOString()
+      };
+      this.createUser(synthesizedUser);
+      return synthesizedUser;
     }
 
     // 3. Match by Doctor Registration Number
