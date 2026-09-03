@@ -32,11 +32,16 @@ export interface PatientProfile {
   emergencyContactRelation: string;
   address: string;
   city: string;
+  state?: string;
   pincode: string;
   fullName?: string;
+  phone?: string;
+  email?: string;
+  preferredLanguage?: LanguageCode;
   allergies?: string[];
   chronicConditions?: string[];
   currentMedications?: string[];
+  createdAt?: string;
 }
 
 export interface DoctorProfile {
