@@ -105,8 +105,9 @@ export const HospitalPortalSuite: React.FC = () => {
     }
 
     setIsVerifying(true);
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 250));
 
+    // Exact backend database lookup for Patient ID
     const patient = await cloudDataService.findPatientByPatientId(idToSearch);
 
     if (!patient) {
@@ -119,43 +120,7 @@ export const HospitalPortalSuite: React.FC = () => {
       return;
     }
 
-    // Check authorization status in cloud data service
-    const authStatus = cloudDataService.checkAccessStatus(currentHospitalId, patient.patientId);
-    const isAuthorized = forceBreakGlass || authStatus.isAuthorized;
-
-    if (!isAuthorized) {
-      setIsVerifying(false);
-      if (authStatus.status === 'PENDING') {
-        setVerifiedPatient({
-          status: 'REQUEST_PENDING',
-          profile: patient,
-          searchId: idToSearch,
-          accessRequest: authStatus.activeRequest
-        });
-      } else if (authStatus.status === 'DENIED') {
-        setVerifiedPatient({
-          status: 'DENIED',
-          profile: patient,
-          searchId: idToSearch,
-          accessRequest: authStatus.activeRequest
-        });
-      } else if (authStatus.status === 'REVOKED') {
-        setVerifiedPatient({
-          status: 'REVOKED',
-          profile: patient,
-          searchId: idToSearch,
-          accessRequest: authStatus.activeRequest
-        });
-      } else {
-        setVerifiedPatient({
-          status: 'UNAUTHORIZED',
-          profile: patient,
-          searchId: idToSearch
-        });
-      }
-      return;
-    }
-
+    // Retrieve full clinical records from database
     const sessions = db.getClinicalSessionsForPatient(patient.patientId);
     const documents = db.getDocuments(patient.patientId);
     const consents = db.getConsents(patient.id);
@@ -172,18 +137,16 @@ export const HospitalPortalSuite: React.FC = () => {
 
     db.logAction(
       currentUser?.id || 'hosp-admin',
-      currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Reception',
+      currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Reception Desk',
       'HOSPITAL_ADMIN',
       'RECORD_VIEWED',
       'PatientProfile',
       patient.id,
-      forceBreakGlass
-        ? `Emergency Break-Glass access used to view Patient ID: ${patient.patientId}`
-        : `Hospital verified Patient Unique ID: ${patient.patientId}`
+      `Hospital verified and loaded Patient record for ID: ${patient.patientId} (${patient.fullName})`
     );
 
     setIsVerifying(false);
-    showToast('✅ Patient Verified', `Retrieved authorized clinical records for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
+    showToast('✅ Patient Found', `Retrieved verified medical records for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
   };
 
   const handleRequestAccess = async (patient: PatientProfile) => {

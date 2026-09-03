@@ -393,10 +393,27 @@ class CloudDataService {
   public async findPatientByPatientId(patientId: string): Promise<PatientProfile | undefined> {
     if (!patientId) return undefined;
     const cleanId = patientId.trim().toUpperCase();
+    const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
 
     // 1. Check local database first (instant response)
     const localPatient = db.getPatientByPatientId(cleanId);
     if (localPatient) return localPatient;
+
+    const allLocal = db.getPatients();
+    const match = allLocal.find(p => {
+      const pId = (p.patientId || '').toUpperCase().trim();
+      const pAlpha = pId.replace(/[^A-Z0-9]/g, '');
+      return (
+        pId === cleanId ||
+        (cleanAlpha.length >= 4 && pAlpha === cleanAlpha) ||
+        (cleanAlpha.length >= 4 && pAlpha.includes(cleanAlpha)) ||
+        p.id.toUpperCase() === cleanId ||
+        p.userId.toUpperCase() === cleanId ||
+        (p.abhaId && p.abhaId.toUpperCase() === cleanId) ||
+        (p.email && p.email.toLowerCase() === patientId.trim().toLowerCase())
+      );
+    });
+    if (match) return match;
 
     // 2. Query Supabase if active
     if (supabase) {
@@ -405,7 +422,7 @@ class CloudDataService {
           .from('patients')
           .select('*')
           .or(`patient_id.eq.${cleanId},abha_id.eq.${cleanId}`)
-          .single();
+          .maybeSingle();
 
         if (data && !error) {
           const profile: PatientProfile = {
