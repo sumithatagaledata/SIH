@@ -202,13 +202,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (d) setDoctorProfile(d);
       setPatientProfile(undefined);
       setHospitalAccount(undefined);
-    } else if (user.role === 'HOSPITAL_ADMIN') {
+    } else if (user.role === 'HOSPITAL_ADMIN' || user.role === 'HOSPITAL') {
       const hacct = db.getHospitalAccountByUserId(user.id);
       setHospitalAccount(hacct || undefined);
       setPatientProfile(undefined);
       setDoctorProfile(undefined);
+    } else if (user.role === 'ADMIN' || user.role === 'SYSTEM_ADMIN') {
+      setHospitalAccount(undefined);
+      setPatientProfile(undefined);
+      setDoctorProfile(undefined);
     } else {
       setHospitalAccount(undefined);
+      setPatientProfile(undefined);
+      setDoctorProfile(undefined);
     }
 
     setCurrentUser(user);

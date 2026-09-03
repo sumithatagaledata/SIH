@@ -427,9 +427,10 @@ const SEED_USERS: User[] = [
   {
     id: 'usr-admin-01',
     email: 'admin@apexhealth.in',
+    password: 'Admin@123',
     phone: '+91 99300 88776',
-    fullName: 'System Administrator',
-    role: 'HOSPITAL_ADMIN',
+    fullName: 'Platform Administrator',
+    role: 'ADMIN',
     avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80',
     createdAt: '2025-10-01T08:00:00Z'
   },
