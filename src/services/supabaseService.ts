@@ -144,20 +144,19 @@ class CrossDeviceSyncRelay {
 
 export const syncRelay = new CrossDeviceSyncRelay();
 
+import { cloudDb } from './cloudDatabaseEngine';
+
 /**
- * CloudDataService — Unified database interface connecting Supabase and local cache
+ * CloudDataService — Unified database interface connecting Cloud DB, Supabase, and local cache
  */
 class CloudDataService {
   private static instance: CloudDataService;
 
   private constructor() {
-    // Sync Access Requests Storage Key
-    if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem('medibridge_access_requests');
-      if (!stored) {
-        localStorage.setItem('medibridge_access_requests', JSON.stringify([]));
-      }
-    }
+    // Initial sync from persistent cloud database
+    cloudDb.syncAll().then(() => {
+      this.syncCloudToLocal();
+    });
   }
 
   public static getInstance(): CloudDataService {
@@ -167,23 +166,74 @@ class CloudDataService {
     return CloudDataService.instance;
   }
 
+  private async syncCloudToLocal() {
+    try {
+      const [patients, hospitals, requests, trusted] = await Promise.all([
+        cloudDb.getPatients(),
+        cloudDb.getHospitals(),
+        cloudDb.getAccessRequests(),
+        cloudDb.getTrustedHospitals()
+      ]);
+
+      patients.forEach(p => {
+        db.createPatientProfile(p as any);
+      });
+
+      hospitals.forEach(h => {
+        db.createHospitalAccount(h as any);
+      });
+
+      trusted.forEach(t => {
+        db.saveTrustedHospital(t as any);
+      });
+    } catch {}
+  }
+
   // =========================================================================
   // 1. PATIENT REGISTRATION & DISCOVERY
   // =========================================================================
 
   public async registerPatient(patient: PatientProfile, user: User): Promise<{ success: boolean; patientId: string; error?: string }> {
     try {
-      // 1. Save to local high-fidelity database
+      const cleanPatientId = patient.patientId.trim().toUpperCase();
+
+      // 1. Save to single persistent cloud database
+      await cloudDb.savePatient({
+        id: patient.id,
+        userId: user.id,
+        patientId: cleanPatientId,
+        abhaId: patient.abhaId,
+        abhaAddress: patient.abhaAddress,
+        fullName: patient.fullName || user.fullName,
+        email: user.email,
+        phone: user.phone || patient.emergencyContactPhone,
+        dob: patient.dob,
+        age: patient.age,
+        gender: patient.gender,
+        bloodGroup: patient.bloodGroup,
+        address: patient.address,
+        city: patient.city,
+        pincode: patient.pincode,
+        emergencyContactName: patient.emergencyContactName,
+        emergencyContactPhone: patient.emergencyContactPhone,
+        emergencyContactRelation: patient.emergencyContactRelation,
+        allergies: patient.allergies || [],
+        chronicConditions: patient.chronicConditions || [],
+        currentMedications: patient.currentMedications || [],
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
+      });
+
+      // 2. Save to local high-fidelity cache
       db.createUser(user);
       db.createPatientProfile(patient);
 
-      // 2. If Supabase is active, persist to Supabase Auth & Tables
+      // 3. If Supabase is active, persist to Supabase Auth & Tables
       if (supabase) {
         try {
-          // Check if patient exists in public.patients
-          const { error: patientErr } = await supabase.from('patients').upsert({
+          await supabase.from('patients').upsert({
             user_id: patient.userId,
-            patient_id: patient.patientId,
+            patient_id: cleanPatientId,
             abha_id: patient.abhaId,
             abha_address: patient.abhaAddress,
             full_name: patient.fullName || user.fullName,
@@ -201,20 +251,18 @@ class CloudDataService {
             chronic_conditions: patient.chronicConditions || [],
             current_medications: patient.currentMedications || []
           }, { onConflict: 'patient_id' });
-
-          if (patientErr) console.warn('[Supabase Patient Insert Warning]', patientErr);
         } catch (sbErr) {
           console.warn('[Supabase Direct Insert Error]', sbErr);
         }
       }
 
-      // 3. Broadcast new patient creation across devices
+      // 4. Broadcast new patient creation across devices
       syncRelay.publish('patient_registered', {
-        patientId: patient.patientId,
+        patientId: cleanPatientId,
         patient
       });
 
-      return { success: true, patientId: patient.patientId };
+      return { success: true, patientId: cleanPatientId };
     } catch (err: any) {
       return { success: false, patientId: patient.patientId, error: err.message || 'Failed to create patient profile' };
     }
@@ -222,15 +270,40 @@ class CloudDataService {
 
   public async registerHospital(hospitalAccount: any, user: User): Promise<{ success: boolean; hospitalId: string; error?: string }> {
     try {
-      // 1. Save to local database
+      const hospId = (hospitalAccount.id || hospitalAccount.linkedHospitalId).trim().toUpperCase();
+
+      // 1. Save to single persistent cloud database
+      await cloudDb.saveHospital({
+        id: hospId,
+        userId: user.id,
+        hospitalId: hospId,
+        hospitalName: hospitalAccount.hospitalName || user.fullName,
+        registrationId: hospitalAccount.registrationId,
+        code: hospitalAccount.registrationId || hospId,
+        email: hospitalAccount.email || user.email,
+        phone: hospitalAccount.emergencyContact || user.phone,
+        emergencyContact: hospitalAccount.emergencyContact,
+        address: hospitalAccount.address || hospitalAccount.location || 'Hospital Facility',
+        city: hospitalAccount.city || 'Pune',
+        location: hospitalAccount.location || hospitalAccount.city || 'Pune',
+        state: hospitalAccount.state || 'Maharashtra',
+        pincode: hospitalAccount.pincode || '410507',
+        ambulanceAvailable: hospitalAccount.ambulanceAvailable ?? true,
+        coordinates: hospitalAccount.coordinates,
+        departments: hospitalAccount.departments || ['Emergency & Trauma', 'General Medicine', 'Cardiology', 'ICU'],
+        status: 'VERIFIED',
+        createdAt: new Date().toISOString()
+      });
+
+      // 2. Save to local database cache
       db.createUser(user);
       db.createHospitalAccount(hospitalAccount);
 
-      // 2. Persist to Supabase if active
+      // 3. Persist to Supabase if active
       if (supabase) {
         try {
-          const { error: hospErr } = await supabase.from('hospitals').upsert({
-            id: hospitalAccount.id || hospitalAccount.linkedHospitalId,
+          await supabase.from('hospitals').upsert({
+            id: hospId,
             name: hospitalAccount.hospitalName || user.fullName,
             code: hospitalAccount.registrationId || 'HOSP-REG',
             registration_number: hospitalAccount.registrationId,
@@ -244,20 +317,18 @@ class CloudDataService {
             verification_status: 'ABDM_REGISTERED',
             departments: hospitalAccount.departments || ['Emergency & Trauma', 'General Medicine', 'ICU']
           }, { onConflict: 'id' });
-
-          if (hospErr) console.warn('[Supabase Hospital Insert Warning]', hospErr);
         } catch (sbErr) {
           console.warn('[Supabase Hospital Insert Error]', sbErr);
         }
       }
 
-      // 3. Broadcast new hospital creation across devices
+      // 4. Broadcast new hospital creation across devices
       syncRelay.publish('hospital_registered', {
-        hospitalId: hospitalAccount.id || hospitalAccount.linkedHospitalId,
+        hospitalId: hospId,
         hospitalAccount
       });
 
-      return { success: true, hospitalId: hospitalAccount.id || hospitalAccount.linkedHospitalId };
+      return { success: true, hospitalId: hospId };
     } catch (err: any) {
       return { success: false, hospitalId: hospitalAccount?.id, error: err.message || 'Failed to create hospital account' };
     }
@@ -277,7 +348,33 @@ class CloudDataService {
     dob?: string;
     age?: number;
   }[]> {
-    // 1. Query Supabase if active
+    // 1. Query persistent cloud database (works across all browsers and devices)
+    try {
+      const cloudPatients = await cloudDb.getPatients();
+      if (cloudPatients && cloudPatients.length > 0) {
+        // Cache in local db
+        cloudPatients.forEach(p => db.createPatientProfile(p as any));
+
+        return cloudPatients.map(p => ({
+          id: p.id || `pat-${p.patientId}`,
+          patientId: p.patientId,
+          fullName: p.fullName || 'Registered Patient',
+          email: p.email,
+          phone: p.emergencyContactPhone || p.phone,
+          status: 'ACTIVE',
+          createdAt: p.createdAt || new Date().toISOString(),
+          city: p.city || 'Maharashtra',
+          gender: p.gender || 'FEMALE',
+          bloodGroup: p.bloodGroup || 'B+',
+          dob: p.dob,
+          age: p.age
+        }));
+      }
+    } catch (err) {
+      console.warn('[CloudDB getRegisteredPatients error]:', err);
+    }
+
+    // 2. Query Supabase if active
     if (supabase) {
       try {
         const { data, error } = await supabase
@@ -306,7 +403,7 @@ class CloudDataService {
       }
     }
 
-    // 2. Query local persistent database
+    // 3. Query local persistent cache
     const localPatients = db.getPatients();
     const users = db.getUsers();
     return localPatients.map(p => {
@@ -341,7 +438,31 @@ class CloudDataService {
     createdAt: string;
     ambulanceAvailable?: boolean;
   }[]> {
-    // 1. Query Supabase if active
+    // 1. Query persistent cloud database (works across all browsers and devices)
+    try {
+      const cloudHospitals = await cloudDb.getHospitals();
+      if (cloudHospitals && cloudHospitals.length > 0) {
+        cloudHospitals.forEach(h => db.createHospitalAccount(h as any));
+
+        return cloudHospitals.map(h => ({
+          id: h.id,
+          hospitalId: h.hospitalId || h.id,
+          hospitalName: h.hospitalName,
+          registrationId: h.registrationId || h.code,
+          email: h.email,
+          phone: h.emergencyContact || h.phone,
+          location: `${h.city || ''}, ${h.location || h.address || ''}`.trim(),
+          city: h.city || 'Pune',
+          status: 'VERIFIED',
+          createdAt: h.createdAt || new Date().toISOString(),
+          ambulanceAvailable: h.ambulanceAvailable ?? true
+        }));
+      }
+    } catch (err) {
+      console.warn('[CloudDB getRegisteredHospitals error]:', err);
+    }
+
+    // 2. Query Supabase if active
     if (supabase) {
       try {
         const { data, error } = await supabase
@@ -369,7 +490,7 @@ class CloudDataService {
       }
     }
 
-    // 2. Query local persistent database
+    // 3. Query local persistent cache
     const localAccounts = db.getHospitalAccounts();
     const users = db.getUsers();
     return localAccounts.map(h => {
@@ -396,9 +517,38 @@ class CloudDataService {
     const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
     if (!cleanAlpha) return undefined;
 
-    // 1. Check local persistent database first (instant response)
-    const localPatient = db.getPatientByPatientId(cleanId);
-    if (localPatient) return localPatient;
+    // 1. Query persistent cloud database (works across all browsers and devices)
+    try {
+      const cloudPatient = await cloudDb.findPatientById(cleanId);
+      if (cloudPatient) {
+        const profile: PatientProfile = {
+          id: cloudPatient.id || `pat-${cloudPatient.patientId}`,
+          userId: cloudPatient.userId || `usr-${cloudPatient.patientId}`,
+          patientId: cloudPatient.patientId,
+          abhaId: cloudPatient.abhaId,
+          abhaAddress: cloudPatient.abhaAddress,
+          dob: cloudPatient.dob || '1990-01-01',
+          age: cloudPatient.age || 35,
+          gender: cloudPatient.gender as any || 'FEMALE',
+          bloodGroup: cloudPatient.bloodGroup || 'B+',
+          fullName: cloudPatient.fullName,
+          address: cloudPatient.address || '',
+          city: cloudPatient.city || '',
+          pincode: cloudPatient.pincode || '',
+          emergencyContactName: cloudPatient.emergencyContactName || 'Family',
+          emergencyContactPhone: cloudPatient.emergencyContactPhone || '',
+          emergencyContactRelation: cloudPatient.emergencyContactRelation || 'Next of Kin',
+          allergies: cloudPatient.allergies || [],
+          chronicConditions: cloudPatient.chronicConditions || [],
+          currentMedications: cloudPatient.currentMedications || []
+        };
+        // Cache in local database for subsequent fast lookups
+        db.createPatientProfile(profile);
+        return profile;
+      }
+    } catch (err) {
+      console.warn('[CloudDB findPatientByPatientId error]:', err);
+    }
 
     // 2. Query Supabase if active
     if (supabase) {
@@ -440,6 +590,10 @@ class CloudDataService {
       }
     }
 
+    // 3. Check local persistent cache
+    const localPatient = db.getPatientByPatientId(cleanId);
+    if (localPatient) return localPatient;
+
     return undefined;
   }
 
@@ -447,7 +601,7 @@ class CloudDataService {
   // 2. ACCESS REQUESTS & CONSENT WORKFLOW (CROSS-DEVICE)
   // =========================================================================
 
-  // Access Requests In-Memory Cache with LocalStorage Persistence
+  // Access Requests In-Memory Cache with Cloud Persistence
   private accessRequestsMemoryStore: AccessRequest[] = [];
 
   public getAccessRequests(): AccessRequest[] {
@@ -498,14 +652,16 @@ class CloudDataService {
       reason: params.reason || 'Patient registration and clinical evaluation'
     };
 
-    // 1. Save locally
+    // 1. Save to cloud database
+    await cloudDb.saveAccessRequest(newRequest);
+
+    // 2. Save locally
     const all = this.getAccessRequests();
-    // Replace existing pending request from same hospital for this patient if any
     const filtered = all.filter(r => !(r.patientId === newRequest.patientId && r.hospitalId === newRequest.hospitalId && r.status === 'PENDING'));
     filtered.unshift(newRequest);
     this.setAccessRequests(filtered);
 
-    // 2. Persist to Supabase if active
+    // 3. Persist to Supabase if active
     if (supabase) {
       try {
         await supabase.from('access_requests').insert({
@@ -526,7 +682,7 @@ class CloudDataService {
       }
     }
 
-    // 3. Log Audit
+    // 4. Log Audit
     db.logAction(
       params.hospitalId,
       params.requestedBy,
@@ -537,7 +693,7 @@ class CloudDataService {
       `${params.hospitalName} (${params.requestedBy}) requested clinical access for Patient ${params.patientId}`
     );
 
-    // 4. Publish Realtime Notification for Patient Device
+    // 5. Publish Realtime Notification for Patient Device
     syncRelay.publish(`patient_access_request_${newRequest.patientId}`, newRequest);
     syncRelay.publish('access_requests_changed', newRequest);
 
@@ -545,17 +701,28 @@ class CloudDataService {
   }
 
   public async respondToAccessRequest(requestId: string, status: 'APPROVED' | 'DENIED'): Promise<AccessRequest | undefined> {
-    const all = this.getAccessRequests();
-    const target = all.find(r => r.id === requestId);
+    const cloudRequests = await cloudDb.getAccessRequests();
+    const target = cloudRequests.find(r => r.id === requestId) || this.getAccessRequests().find(r => r.id === requestId);
     if (!target) return undefined;
 
     target.status = status;
     target.respondedAt = new Date().toISOString();
-    this.setAccessRequests(all);
 
-    // If APPROVED, also link to TrustedHospitals in database
+    // 1. Update cloud database
+    await cloudDb.saveAccessRequest(target);
+
+    // 2. Update local state
+    const all = this.getAccessRequests();
+    const localTarget = all.find(r => r.id === requestId);
+    if (localTarget) {
+      localTarget.status = status;
+      localTarget.respondedAt = target.respondedAt;
+      this.setAccessRequests(all);
+    }
+
+    // If APPROVED, also link to TrustedHospitals in cloud database and local db
     if (status === 'APPROVED') {
-      db.saveTrustedHospital({
+      const trustRecord = {
         id: `trust-${Date.now()}`,
         patientId: target.patientId,
         patientProfileId: target.patientId,
@@ -564,13 +731,15 @@ class CloudDataService {
         hospitalAddress: `${target.hospitalName}, Main Facility`,
         hospitalCity: 'Maharashtra',
         grantedAt: new Date().toISOString(),
-        status: 'ACTIVE',
+        status: 'ACTIVE' as const,
         allowEmergencyAlert: true,
         allowMedicalHistory: true,
         distanceKm: 0.5
-      });
+      };
+
+      await cloudDb.saveTrustedHospital(trustRecord);
+      db.saveTrustedHospital(trustRecord);
     } else if (status === 'DENIED') {
-      // Ensure no active trusted link exists
       const trusted = db.getTrustedHospitals(target.patientId);
       trusted.filter(t => t.hospitalId === target.hospitalId).forEach(t => db.revokeTrustedHospital(t.id));
     }
