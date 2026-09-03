@@ -326,6 +326,22 @@ export interface ConsentRecord {
   allowAiClinicalParsing: boolean;
 }
 
+export interface AccessRequest {
+  id: string;
+  patientId: string;
+  patientName?: string;
+  hospitalId: string;
+  hospitalName: string;
+  doctorId?: string;
+  doctorName?: string;
+  requestedBy: string;
+  requestedAt: string;
+  respondedAt?: string;
+  status: 'PENDING' | 'APPROVED' | 'DENIED' | 'REVOKED';
+  accessScope: string;
+  reason?: string;
+}
+
 // Hospital Account — registered hospital entity (separate from capacity-tracking Hospital model)
 export interface HospitalAccount {
   id: string;
@@ -371,7 +387,7 @@ export interface AuditLog {
   actorId: string;
   actorName: string;
   actorRole: UserRole;
-  action: 'LOGIN' | 'INTAKE_STARTED' | 'INTAKE_COMPLETED' | 'DOCUMENT_UPLOADED' | 'OCR_EXTRACTED' | 'RED_FLAG_TRIGGERED' | 'EMERGENCY_DISPATCHED' | 'RECORD_VIEWED' | 'RECORD_VERIFIED' | 'CONSENT_GRANTED' | 'CONSENT_REVOKED' | 'FHIR_EXPORTED';
+  action: 'LOGIN' | 'INTAKE_STARTED' | 'INTAKE_COMPLETED' | 'DOCUMENT_UPLOADED' | 'OCR_EXTRACTED' | 'RED_FLAG_TRIGGERED' | 'EMERGENCY_DISPATCHED' | 'RECORD_VIEWED' | 'RECORD_VERIFIED' | 'CONSENT_GRANTED' | 'CONSENT_REVOKED' | 'FHIR_EXPORTED' | 'REQUEST_ACCESS' | 'APPROVE_ACCESS' | 'DENY_ACCESS' | 'REVOKE_ACCESS' | 'EMERGENCY_OVERRIDE';
   targetEntity: string;
   targetId: string;
   ipAddress: string;

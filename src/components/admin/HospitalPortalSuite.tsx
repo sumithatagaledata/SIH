@@ -10,7 +10,8 @@ import {
 import { db } from '../../services/mockDatabase';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
-import { PatientProfile, ClinicalSession, MedicalDocument, Hospital } from '../../types';
+import { cloudDataService, syncRelay } from '../../services/supabaseService';
+import { PatientProfile, ClinicalSession, MedicalDocument, Hospital, AccessRequest } from '../../types';
 
 interface BedCategory {
   id: string;
@@ -38,10 +39,11 @@ interface DiagnosticOrder {
   patientName: string;
   testName: string;
   department: 'RADIOLOGY' | 'PATHOLOGY' | 'CARDIOLOGY' | 'BIOCHEMISTRY';
+  urgency: 'STAT' | 'URGENT' | 'ROUTINE';
   orderedBy: string;
   orderedAt: string;
-  urgency: 'STAT' | 'URGENT' | 'ROUTINE';
-  status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED';
+  status: 'PENDING' | 'IN_PROGRESS' | 'SAMPLE_COLLECTED' | 'PROCESSING' | 'COMPLETED';
+  reportId?: string;
   resultSummary?: string;
 }
 
@@ -58,17 +60,42 @@ export const HospitalPortalSuite: React.FC = () => {
   // ==========================================
   const [patientIdInput, setPatientIdInput] = useState('');
   const [verifiedPatient, setVerifiedPatient] = useState<{
-    status: 'AUTHORIZED' | 'UNAUTHORIZED' | 'NOT_FOUND';
+    status: 'AUTHORIZED' | 'UNAUTHORIZED' | 'NOT_FOUND' | 'REQUEST_PENDING' | 'DENIED' | 'REVOKED';
     profile?: PatientProfile;
     sessions?: ClinicalSession[];
     documents?: MedicalDocument[];
     consents?: any[];
     searchId?: string;
     isBreakGlass?: boolean;
+    accessRequest?: AccessRequest;
   } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [admissionType, setAdmissionType] = useState<'OPD' | 'EMERGENCY' | 'ICU' | 'DAYCARE'>('EMERGENCY');
   const [admissionDept, setAdmissionDept] = useState('Emergency Medicine / Trauma');
+
+  const currentHospitalId = hospitalAccount?.id || currentUser?.id || 'HOSP-2026-00101';
+  const currentHospitalName = hospitalAccount?.hospitalName || currentUser?.fullName || 'Apex Super Speciality Hospital';
+
+  // Real-time listener for permission approval/denial from patient device
+  useEffect(() => {
+    if (!verifiedPatient?.profile?.patientId) return;
+    const targetPatientId = verifiedPatient.profile.patientId;
+
+    const unsub = syncRelay.subscribe(`hospital_patient_auth_${currentHospitalId}_${targetPatientId}`, (payload: any) => {
+      if (payload?.status === 'APPROVED') {
+        handleVerifyPatient(targetPatientId, false);
+        showToast('🎉 Access Approved', `Patient ${targetPatientId} approved your medical record access request!`, 'VERIFICATION');
+      } else if (payload?.status === 'DENIED') {
+        setVerifiedPatient(prev => prev ? { ...prev, status: 'DENIED' } : null);
+        showToast('❌ Access Denied', `Patient ${targetPatientId} denied the access request.`, 'INFO');
+      } else if (payload?.status === 'REVOKED') {
+        setVerifiedPatient(prev => prev ? { ...prev, status: 'REVOKED' } : null);
+        showToast('⚠️ Access Revoked', `Patient ${targetPatientId} revoked data sharing permission.`, 'INFO');
+      }
+    });
+
+    return () => unsub();
+  }, [verifiedPatient?.profile?.patientId, currentHospitalId]);
 
   const handleVerifyPatient = async (targetId: string, forceBreakGlass: boolean = false) => {
     const idToSearch = (targetId || patientIdInput).trim().toUpperCase();
@@ -78,9 +105,9 @@ export const HospitalPortalSuite: React.FC = () => {
     }
 
     setIsVerifying(true);
-    await new Promise(r => setTimeout(r, 450));
+    await new Promise(r => setTimeout(r, 350));
 
-    const patient = db.getPatientByPatientId(idToSearch) || db.getPatientById(idToSearch);
+    const patient = await cloudDataService.findPatientByPatientId(idToSearch);
 
     if (!patient) {
       setIsVerifying(false);
@@ -88,21 +115,44 @@ export const HospitalPortalSuite: React.FC = () => {
         status: 'NOT_FOUND',
         searchId: idToSearch
       });
-      showToast('❌ Not Found', `No patient record found matching "${idToSearch}". Please verify the Patient ID and try again.`, 'INFO');
+      showToast('❌ Not Found', `No patient record found for Patient ID "${idToSearch}".`, 'INFO');
       return;
     }
 
-    const currentHospitalId = hospitalAccount?.id || currentUser?.id || 'HOSP-2026-00101';
-    const isAuthorized = forceBreakGlass || db.isHospitalAuthorizedForPatient(currentHospitalId, patient.patientId);
+    // Check authorization status in cloud data service
+    const authStatus = cloudDataService.checkAccessStatus(currentHospitalId, patient.patientId);
+    const isAuthorized = forceBreakGlass || authStatus.isAuthorized;
 
     if (!isAuthorized) {
       setIsVerifying(false);
-      setVerifiedPatient({
-        status: 'UNAUTHORIZED',
-        profile: patient,
-        searchId: idToSearch
-      });
-      showToast('🔒 Access Restricted', 'This patient has not granted this hospital permission to access their medical records.', 'INFO');
+      if (authStatus.status === 'PENDING') {
+        setVerifiedPatient({
+          status: 'REQUEST_PENDING',
+          profile: patient,
+          searchId: idToSearch,
+          accessRequest: authStatus.activeRequest
+        });
+      } else if (authStatus.status === 'DENIED') {
+        setVerifiedPatient({
+          status: 'DENIED',
+          profile: patient,
+          searchId: idToSearch,
+          accessRequest: authStatus.activeRequest
+        });
+      } else if (authStatus.status === 'REVOKED') {
+        setVerifiedPatient({
+          status: 'REVOKED',
+          profile: patient,
+          searchId: idToSearch,
+          accessRequest: authStatus.activeRequest
+        });
+      } else {
+        setVerifiedPatient({
+          status: 'UNAUTHORIZED',
+          profile: patient,
+          searchId: idToSearch
+        });
+      }
       return;
     }
 
@@ -133,7 +183,45 @@ export const HospitalPortalSuite: React.FC = () => {
     );
 
     setIsVerifying(false);
-    showToast('✅ Patient Verified', `Retrieved authorized ABDM clinical record for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
+    showToast('✅ Patient Verified', `Retrieved authorized clinical records for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
+  };
+
+  const handleRequestAccess = async (patient: PatientProfile) => {
+    const staffName = currentUser?.fullName || 'Hospital Reception Desk';
+    const req = await cloudDataService.createAccessRequest({
+      patientId: patient.patientId,
+      patientName: patient.fullName,
+      hospitalId: currentHospitalId,
+      hospitalName: currentHospitalName,
+      doctorId: currentUser?.id,
+      doctorName: staffName,
+      requestedBy: staffName,
+      accessScope: 'Full Medical History & AI Clinical Intake Summaries'
+    });
+
+    setVerifiedPatient(prev => prev ? { ...prev, status: 'REQUEST_PENDING', accessRequest: req } : null);
+    showToast('📩 Access Request Sent', `Real-time access request dispatched to Patient ${patient.patientId}. Waiting for approval on patient device.`, 'INFO');
+  };
+
+  const handleEmergencyBreakGlass = async (patient: PatientProfile) => {
+    const reason = window.prompt(
+      `🚨 EMERGENCY BREAK-GLASS OVERRIDE:\nPlease state the clinical emergency justification for accessing Patient ${patient.patientId}'s records without prior consent (e.g., Unconscious in ER / Acute Trauma / Anaphylaxis):`,
+      'Acute Clinical Emergency — Patient Unresponsive'
+    );
+    if (!reason || !reason.trim()) return;
+
+    const staffName = currentUser?.fullName || 'ER Duty Officer';
+    await cloudDataService.grantEmergencyAccess({
+      hospitalId: currentHospitalId,
+      hospitalName: currentHospitalName,
+      staffId: currentUser?.id || 'staff-er',
+      staffName,
+      patientId: patient.patientId,
+      reason: reason.trim()
+    });
+
+    await handleVerifyPatient(patient.patientId, true);
+    showToast('🚨 Emergency Access Granted', `Break-Glass override recorded. Audit entry logged.`, 'EMERGENCY');
   };
 
   const handleFastTrackAdmit = (patient: PatientProfile) => {
@@ -487,17 +575,18 @@ export const HospitalPortalSuite: React.FC = () => {
             </div>
           </div>
 
-          {/* Result States */}
+          {/* 1. NOT FOUND */}
           {verifiedPatient && verifiedPatient.status === 'NOT_FOUND' && (
-            <div className="p-8 bg-red-50 border border-red-200 rounded-3xl text-center space-y-3 animate-scale-up">
+            <div className="p-8 bg-red-50 border border-red-200 rounded-3xl text-center space-y-3 animate-scale-up shadow-sm">
               <XCircle className="w-12 h-12 text-red-500 mx-auto" />
-              <h4 className="text-base font-extrabold text-red-900">❌ Patient Not Found</h4>
+              <h4 className="text-base font-extrabold text-red-900">No patient record found for this Patient ID</h4>
               <p className="text-xs text-red-700 max-w-md mx-auto">
-                No patient record found matching <strong>{verifiedPatient.searchId}</strong> in the shared registry. Please verify the Patient ID and try again.
+                No registered patient in the database matches <strong>"{verifiedPatient.searchId}"</strong>. Please verify the Patient ID with the patient.
               </p>
             </div>
           )}
 
+          {/* 2. PATIENT FOUND — UNAUTHORIZED / REQUEST ACCESS */}
           {verifiedPatient && verifiedPatient.status === 'UNAUTHORIZED' && verifiedPatient.profile && (
             <div className="p-8 bg-amber-50 border border-amber-300 rounded-3xl space-y-5 animate-scale-up shadow-sm">
               <div className="flex items-start gap-4">
@@ -506,41 +595,153 @@ export const HospitalPortalSuite: React.FC = () => {
                 </div>
                 <div className="space-y-1.5 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="text-lg font-black text-amber-900">🔒 Access Restricted</h4>
-                    <span className="font-mono text-xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded border border-emerald-300">
+                      ✓ Patient Found
+                    </span>
+                    <h4 className="text-lg font-black text-slate-900">
+                      {verifiedPatient.profile.fullName || 'Registered Patient'}
+                    </h4>
+                    <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded border border-teal-300">
                       {verifiedPatient.profile.patientId}
                     </span>
                   </div>
-                  <p className="text-xs text-amber-900 font-medium leading-relaxed">
-                    This patient has <strong>not granted this hospital permission</strong> to access their medical records.
+
+                  <p className="text-xs text-amber-900 font-medium leading-relaxed pt-1">
+                    🔒 <strong>Access Restricted:</strong> This hospital has not been granted permission to access this patient's medical records.
                   </p>
-                  <p className="text-[11px] text-amber-700 leading-relaxed">
-                    Under patient data privacy controls, private medical histories, AI intake summaries, and clinical documents are protected until the patient adds this hospital to their <strong>Trusted Hospitals</strong> list.
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    Under ABDM health data guidelines, send an access request to the patient's device or use Emergency Break-Glass override if clinically justified.
                   </p>
                 </div>
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-2 flex flex-wrap items-center gap-3 border-t border-amber-200/80">
+              <div className="pt-3 flex flex-wrap items-center gap-3 border-t border-amber-200/80">
                 <button
                   type="button"
-                  onClick={() => {
-                    showToast('📩 Access Request Sent', `Data-sharing consent request dispatched to Patient ${verifiedPatient.profile?.patientId}.`, 'INFO');
-                  }}
-                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5"
+                  onClick={() => handleRequestAccess(verifiedPatient.profile!)}
+                  className="px-5 py-3 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-teal-600/20 transition flex items-center gap-2"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Request Patient Access Consent</span>
+                  <Send className="w-4 h-4" />
+                  <span>REQUEST ACCESS FROM PATIENT</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => handleVerifyPatient(verifiedPatient.profile?.patientId || '', true)}
-                  className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5"
+                  onClick={() => handleEmergencyBreakGlass(verifiedPatient.profile!)}
+                  className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-red-600/20 transition flex items-center gap-2"
                 >
-                  <ShieldAlert className="w-3.5 h-3.5" />
-                  <span>Emergency Break-Glass Override</span>
+                  <ShieldAlert className="w-4 h-4" />
+                  <span>🚨 EMERGENCY ACCESS (Break-Glass)</span>
                 </button>
+              </div>
+            </div>
+          )}
+
+          {/* 3. REQUEST PENDING (WAITING FOR PATIENT APPROVAL) */}
+          {verifiedPatient && verifiedPatient.status === 'REQUEST_PENDING' && verifiedPatient.profile && (
+            <div className="p-8 bg-amber-50 border-2 border-amber-400 rounded-3xl space-y-5 animate-scale-up shadow-md">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-amber-200 border border-amber-400 flex items-center justify-center text-amber-900 flex-shrink-0">
+                  <RefreshCw className="w-7 h-7 animate-spin text-amber-700" />
+                </div>
+                <div className="space-y-2 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-amber-200 text-amber-900 px-2.5 py-0.5 rounded border border-amber-400 animate-pulse">
+                      🟡 PENDING PATIENT APPROVAL
+                    </span>
+                    <h4 className="text-lg font-black text-slate-900">
+                      {verifiedPatient.profile.fullName || 'Registered Patient'}
+                    </h4>
+                    <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 px-2.5 py-0.5 rounded border border-teal-300">
+                      {verifiedPatient.profile.patientId}
+                    </span>
+                  </div>
+
+                  <p className="text-sm font-bold text-amber-950">
+                    Access request pending patient approval on their device.
+                  </p>
+                  <p className="text-xs text-amber-800 leading-relaxed">
+                    A notification banner has been dispatched to <strong>Patient {verifiedPatient.profile.patientId} ({verifiedPatient.profile.fullName})</strong>. As soon as the patient taps <strong>"Approve Access"</strong> on their device, this screen will update automatically.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-amber-200">
+                <div className="flex items-center gap-2 text-xs text-amber-800 font-mono">
+                  <Radio className="w-4 h-4 text-emerald-600 animate-pulse" />
+                  <span>Listening for real-time patient response...</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleVerifyPatient(verifiedPatient.profile!.patientId)}
+                    className="px-3.5 py-2 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold text-xs rounded-xl transition flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Check Status</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEmergencyBreakGlass(verifiedPatient.profile!)}
+                    className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5"
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5" />
+                    <span>Emergency Override</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 4. ACCESS DENIED */}
+          {verifiedPatient && verifiedPatient.status === 'DENIED' && verifiedPatient.profile && (
+            <div className="p-8 bg-red-50 border border-red-300 rounded-3xl space-y-4 animate-scale-up shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-red-100 border border-red-300 flex items-center justify-center text-red-700 flex-shrink-0">
+                  <XCircle className="w-7 h-7" />
+                </div>
+                <div className="space-y-1 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-red-200 text-red-900 px-2.5 py-0.5 rounded border border-red-400">
+                      🔴 ACCESS DENIED
+                    </span>
+                    <h4 className="text-lg font-black text-slate-900">
+                      {verifiedPatient.profile.fullName || 'Registered Patient'}
+                    </h4>
+                    <span className="font-mono text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded">
+                      {verifiedPatient.profile.patientId}
+                    </span>
+                  </div>
+                  <p className="text-xs text-red-800 font-bold">
+                    Patient has denied access to their medical records.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 5. ACCESS REVOKED */}
+          {verifiedPatient && verifiedPatient.status === 'REVOKED' && verifiedPatient.profile && (
+            <div className="p-8 bg-slate-100 border border-slate-300 rounded-3xl space-y-4 animate-scale-up shadow-sm">
+              <div className="flex items-start gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-700 flex-shrink-0">
+                  <Lock className="w-7 h-7" />
+                </div>
+                <div className="space-y-1 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-800 px-2.5 py-0.5 rounded">
+                      ⚪ ACCESS REVOKED
+                    </span>
+                    <h4 className="text-lg font-black text-slate-900">
+                      {verifiedPatient.profile.fullName || 'Registered Patient'}
+                    </h4>
+                  </div>
+                  <p className="text-xs text-slate-700 font-bold">
+                    Access has been revoked by patient.
+                  </p>
+                </div>
               </div>
             </div>
           )}

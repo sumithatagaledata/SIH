@@ -124,58 +124,75 @@ export const ConsentManager: React.FC = () => {
         </div>
       </div>
 
-      {/* Active Consents Table */}
-      <div className="space-y-3">
-        <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-          Active Consent Artifacts ({consents.length})
-        </h4>
-
-        <div className="space-y-3">
-          {consents.map(c => (
-            <div
-              key={c.id}
-              className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition ${
-                c.status === 'ACTIVE'
-                  ? 'bg-white border-slate-200 shadow-sm'
-                  : 'bg-slate-50 border-slate-200 opacity-60'
-              }`}
-            >
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-slate-900 text-sm">{c.hospitalName}</span>
-                  <span
-                    className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                      c.status === 'ACTIVE'
-                        ? 'bg-teal-50 text-teal-800 border border-teal-200'
-                        : 'bg-red-50 text-red-700 border border-red-200'
-                    }`}
-                  >
-                    {c.status}
-                  </span>
-                </div>
-
-                <p className="text-xs text-slate-500 mt-1">
-                  Scope: <span className="text-slate-800 font-semibold">{c.scope.replace(/_/g, ' ')}</span> • Granted: {new Date(c.grantedAt).toLocaleDateString()}
-                </p>
-
-                <div className="flex items-center gap-4 text-[11px] text-slate-500 mt-2">
-                  <span>ABDM Sync: {c.allowAbdmSync ? 'Enabled' : 'Disabled'}</span>
-                  <span>•</span>
-                  <span>AI Clinical OCR: {c.allowAiClinicalParsing ? 'Allowed' : 'Disallowed'}</span>
-                </div>
-              </div>
-
-              {c.status === 'ACTIVE' && (
-                <button
-                  onClick={() => handleRevoke(c.id, c.hospitalName)}
-                  className="px-3 py-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold transition shadow-sm"
-                >
-                  Revoke Consent
-                </button>
-              )}
-            </div>
-          ))}
+      {/* Who Can Access My Records Section */}
+      <div className="space-y-4 pt-2">
+        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+          <div>
+            <h4 className="text-sm font-extrabold text-slate-900">
+              Who Can Access My Medical Records?
+            </h4>
+            <p className="text-xs text-slate-500">
+              List of hospitals and doctors who currently hold active authorized permissions to view your health data.
+            </p>
+          </div>
+          <span className="text-xs font-mono font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-lg">
+            Active Permissions: {consents.filter(c => c.status === 'ACTIVE').length}
+          </span>
         </div>
+
+        {consents.length === 0 ? (
+          <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
+            No hospital currently has access to your medical records. You control all data sharing.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {consents.map(c => (
+              <div
+                key={c.id}
+                className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition ${
+                  c.status === 'ACTIVE'
+                    ? 'bg-white border-slate-200 shadow-sm'
+                    : 'bg-slate-50 border-slate-200 opacity-60'
+                }`}
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-900 text-sm">{c.hospitalName}</span>
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                        c.status === 'ACTIVE'
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                          : 'bg-red-50 text-red-700 border border-red-200'
+                      }`}
+                    >
+                      {c.status === 'ACTIVE' ? '🟢 AUTHORIZED' : '⚪ REVOKED'}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-slate-600">
+                    <strong>Access Scope:</strong> <span className="text-slate-800 font-semibold">{c.scope.replace(/_/g, ' ')}</span> • <strong>Granted Date:</strong> {new Date(c.grantedAt).toLocaleDateString()}
+                  </p>
+
+                  <div className="flex items-center gap-4 text-[11px] text-slate-500">
+                    <span>ABDM Sync: {c.allowAbdmSync ? 'Enabled' : 'Disabled'}</span>
+                    <span>•</span>
+                    <span>AI Clinical Parsing: {c.allowAiClinicalParsing ? 'Allowed' : 'Disallowed'}</span>
+                  </div>
+                </div>
+
+                {c.status === 'ACTIVE' && (
+                  <button
+                    onClick={() => handleRevoke(c.id, c.hospitalName)}
+                    className="px-4 py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold transition shadow-sm whitespace-nowrap flex items-center gap-1.5"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>REVOKE ACCESS</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Grant Additional Consent Buttons */}

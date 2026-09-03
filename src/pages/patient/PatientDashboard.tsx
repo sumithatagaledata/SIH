@@ -16,7 +16,8 @@ import { ConsentManager } from '../../components/patient/ConsentManager';
 import { AppointmentBooker } from '../../components/patient/AppointmentBooker';
 import { TrustedHospitalsManager } from '../../components/patient/TrustedHospitalsManager';
 import { db } from '../../services/mockDatabase';
-import { ClinicalSession } from '../../types';
+import { cloudDataService, syncRelay } from '../../services/supabaseService';
+import { AccessRequest, ClinicalSession } from '../../types';
 
 interface PatientDashboardProps {
   initialTab?: string;
@@ -29,6 +30,25 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
   const [activeEmergencyId, setActiveEmergencyId] = useState<string | undefined>(undefined);
   const [activeEmergencyAlert, setActiveEmergencyAlert] = useState<any>(null);
   const [showEmergencyDetails, setShowEmergencyDetails] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([]);
+
+  const loadPendingRequests = async () => {
+    const pId = patientProfile?.patientId || patientProfile?.id;
+    if (pId) {
+      const reqs = await cloudDataService.getPendingRequestsForPatient(pId);
+      setPendingRequests(reqs);
+    }
+  };
+
+  const handleApproveRequest = async (requestId: string) => {
+    await cloudDataService.respondToAccessRequest(requestId, 'APPROVED');
+    await loadPendingRequests();
+  };
+
+  const handleDenyRequest = async (requestId: string) => {
+    await cloudDataService.respondToAccessRequest(requestId, 'DENIED');
+    await loadPendingRequests();
+  };
 
   const checkEmergencyAlerts = () => {
     const alerts = db.getEmergencyAlerts();
@@ -42,10 +62,33 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
 
   useEffect(() => {
     checkEmergencyAlerts();
-    const handleUpdate = () => checkEmergencyAlerts();
+    loadPendingRequests();
+
+    const pId = patientProfile?.patientId || patientProfile?.id;
+    let unsub1: (() => void) | undefined;
+    let unsub2: (() => void) | undefined;
+
+    if (pId) {
+      unsub1 = syncRelay.subscribe(`patient_access_request_${pId}`, (req: AccessRequest) => {
+        setPendingRequests(prev => {
+          const exists = prev.some(r => r.id === req.id);
+          return exists ? prev : [req, ...prev];
+        });
+      });
+      unsub2 = syncRelay.subscribe('access_requests_changed', () => {
+        loadPendingRequests();
+      });
+    }
+
+    const handleUpdate = () => {
+      checkEmergencyAlerts();
+      loadPendingRequests();
+    };
     window.addEventListener('medibridge_db_update', handleUpdate);
     window.addEventListener('medibridge_db_reset', handleUpdate);
     return () => {
+      unsub1?.();
+      unsub2?.();
       window.removeEventListener('medibridge_db_update', handleUpdate);
       window.removeEventListener('medibridge_db_reset', handleUpdate);
     };
@@ -173,6 +216,57 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
           isFullScreenModal={true}
           onCloseModal={() => setShowEmergencyDetails(false)}
         />
+      )}
+
+      {/* Real-Time Hospital Access Requests (Cross-Device Alert) */}
+      {pendingRequests.length > 0 && (
+        <div className="space-y-3">
+          {pendingRequests.map(req => (
+            <div
+              key={req.id}
+              className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-5 sm:p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5 animate-pulse border-2 border-amber-300"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-white/20 border border-white/40 flex items-center justify-center text-white text-2xl flex-shrink-0 shadow-sm">
+                  🔔
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[10px] font-black uppercase tracking-widest bg-black/40 px-2.5 py-0.5 rounded border border-white/30">
+                      🟡 Hospital Access Request
+                    </span>
+                    <span className="text-xs font-mono font-bold bg-white/20 px-2 py-0.5 rounded">
+                      ID: {req.patientId}
+                    </span>
+                  </div>
+                  <h3 className="font-extrabold text-white text-lg">
+                    {req.hospitalName} is requesting access to your medical records
+                  </h3>
+                  <p className="text-xs text-white/90">
+                    <strong>Requested by:</strong> {req.requestedBy} • <strong>Scope:</strong> {req.accessScope}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleDenyRequest(req.id)}
+                  className="px-5 py-2.5 bg-black/40 hover:bg-black/60 text-white font-bold text-xs rounded-xl transition border border-white/30"
+                >
+                  Deny Access
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApproveRequest(req.id)}
+                  className="px-6 py-2.5 bg-white text-teal-900 hover:bg-teal-50 font-black text-xs rounded-xl shadow-lg transition flex items-center gap-1.5"
+                >
+                  <span>✓ Approve Access</span>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Patient Header Banner (Light Theme & Fully Responsive) */}

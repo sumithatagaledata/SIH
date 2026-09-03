@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole, PatientProfile, DoctorProfile, HospitalAccount, LanguageCode } from '../types';
 import { db } from '../services/mockDatabase';
 import { LocationHospitalService } from '../services/locationHospitalService';
+import { cloudDataService } from '../services/supabaseService';
 
 export interface RegisterPatientData {
   fullName: string;
@@ -271,7 +272,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       city: data.city || 'Mumbai',
       pincode: data.pincode || '400001'
     };
-    db.createPatientProfile(newProfile);
+    
+    // Persist to Cloud Database Service
+    const regResult = await cloudDataService.registerPatient(newProfile, newUser);
+    if (!regResult.success) {
+      return { success: false, message: regResult.error || 'Failed to create patient profile in database.' };
+    }
 
     // Set authenticated session
     setCurrentUser(newUser);
