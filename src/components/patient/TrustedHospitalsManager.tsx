@@ -247,7 +247,7 @@ export const TrustedHospitalsManager: React.FC = () => {
   };
 
   const activeCount = trustedList.filter(t => t.status === 'ACTIVE').length;
-  const currentUniquePatientId = patientProfile?.patientId || patientProfileId || patientId || 'MB-2026-7F42K9';
+  const currentUniquePatientId = patientProfile?.patientId || patientProfileId || patientId || (currentUser ? db.getPatientByUserId(currentUser.id)?.patientId : '') || 'Registered Patient';
 
   return (
     <div className="space-y-6">

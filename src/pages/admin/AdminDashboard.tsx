@@ -69,26 +69,47 @@ export const AdminDashboard: React.FC = () => {
     setSelectedHospital(hospital);
     setSelectedPatient(null);
 
-    // Find sessions or shared patients for this hospital
-    const allSessions = db.getClinicalSessions();
-    const hospId = (hospital.hospitalId || hospital.id || '').toUpperCase();
-    
-    // Match patients with admissions or matching records
-    const matchedPatientIds = new Set<string>();
-    allSessions.forEach((s: ClinicalSession) => {
-      if (s.patientId) matchedPatientIds.add(s.patientId.toUpperCase());
+    const hospId = (hospital.hospitalId || hospital.id || '').toLowerCase();
+    const hospName = (hospital.hospitalName || hospital.name || '').toLowerCase();
+
+    // 1. Get trusted / authorized patients
+    const allTrusted = db.getTrustedHospitals();
+    const linkedIds = new Set<string>();
+    allTrusted.forEach(t => {
+      if (
+        t.status === 'ACTIVE' &&
+        ((t.hospitalId && t.hospitalId.toLowerCase() === hospId) ||
+         (t.hospitalName && t.hospitalName.toLowerCase() === hospName))
+      ) {
+        if (t.patientId) linkedIds.add(t.patientId.toUpperCase());
+        if (t.patientProfileId) linkedIds.add(t.patientProfileId.toUpperCase());
+      }
     });
 
-    // Also link patients from local registered list who share emergency location or sessions
+    // 2. Get clinical sessions associated with this hospital
+    const allSessions = db.getClinicalSessions();
+    allSessions.forEach((s: ClinicalSession) => {
+      if (s.patientId && s.selectedHospitalId && s.selectedHospitalId.toLowerCase() === hospId) {
+        linkedIds.add(s.patientId.toUpperCase());
+      }
+    });
+
+    // 3. Get appointments
+    const allApts = db.getAppointments();
+    allApts.forEach(a => {
+      if (a.patientId && ((a.hospitalId && a.hospitalId.toLowerCase() === hospId) || (a.hospitalName && a.hospitalName.toLowerCase() === hospName))) {
+        linkedIds.add(a.patientId.toUpperCase());
+      }
+    });
+
+    // 4. Match against registered patients list
     const linkedPatients = patients.filter(p => {
       const pId = (p.patientId || '').toUpperCase();
-      return (
-        matchedPatientIds.has(pId) ||
-        (p.city && hospital.city && p.city.toLowerCase() === hospital.city.toLowerCase())
-      );
+      const internalId = (p.id || '').toUpperCase();
+      return linkedIds.has(pId) || linkedIds.has(internalId);
     });
 
-    setHospitalPatients(linkedPatients.length > 0 ? linkedPatients : patients.slice(0, 3));
+    setHospitalPatients(linkedPatients);
   };
 
   // STRICT ROLE-BASED ACCESS CONTROL

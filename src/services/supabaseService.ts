@@ -394,26 +394,11 @@ class CloudDataService {
     if (!patientId) return undefined;
     const cleanId = patientId.trim().toUpperCase();
     const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
+    if (!cleanAlpha) return undefined;
 
-    // 1. Check local database first (instant response)
+    // 1. Check local persistent database first (instant response)
     const localPatient = db.getPatientByPatientId(cleanId);
     if (localPatient) return localPatient;
-
-    const allLocal = db.getPatients();
-    const match = allLocal.find(p => {
-      const pId = (p.patientId || '').toUpperCase().trim();
-      const pAlpha = pId.replace(/[^A-Z0-9]/g, '');
-      return (
-        pId === cleanId ||
-        (cleanAlpha.length >= 4 && pAlpha === cleanAlpha) ||
-        (cleanAlpha.length >= 4 && pAlpha.includes(cleanAlpha)) ||
-        p.id.toUpperCase() === cleanId ||
-        p.userId.toUpperCase() === cleanId ||
-        (p.abhaId && p.abhaId.toUpperCase() === cleanId) ||
-        (p.email && p.email.toLowerCase() === patientId.trim().toLowerCase())
-      );
-    });
-    if (match) return match;
 
     // 2. Query Supabase if active
     if (supabase) {

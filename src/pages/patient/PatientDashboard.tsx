@@ -388,10 +388,10 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
           activeSession?.aiSummary ? (
             <ClinicalSummaryView
               summary={activeSession.aiSummary}
-              patient={patientProfile || {
+              patient={patientProfile || (currentUser ? db.getPatientByUserId(currentUser.id) : undefined) || {
                 id: `pat-${currentUser?.id || 'default'}`,
                 userId: currentUser?.id || 'usr-1',
-                patientId: 'MB-2026-7F42K9',
+                patientId: (currentUser ? db.getPatientByUserId(currentUser.id)?.patientId : '') || 'Registered Patient',
                 dob: '1990-01-01',
                 age: 35,
                 gender: 'MALE',

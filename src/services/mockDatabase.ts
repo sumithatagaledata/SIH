@@ -472,25 +472,20 @@ export class MockDatabase {
     if (!patientId) return undefined;
     const clean = patientId.trim().toUpperCase();
     const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+    if (!cleanAlpha) return undefined;
 
     return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(p => {
       const pId = (p.patientId || '').trim().toUpperCase();
       const pIdAlpha = pId.replace(/[^A-Z0-9]/g, '');
       const pInternalId = (p.id || '').trim().toUpperCase();
-      const pUserId = (p.userId || '').trim().toUpperCase();
       const pAbha = (p.abhaId || '').trim().toUpperCase();
-      const pEmail = (p.email || '').trim().toUpperCase();
-      const pName = (p.fullName || '').trim().toUpperCase();
+      const pAbhaAlpha = pAbha.replace(/[^A-Z0-9]/g, '');
 
       return (
         pId === clean ||
         pIdAlpha === cleanAlpha ||
         pInternalId === clean ||
-        pUserId === clean ||
-        pAbha === clean ||
-        pEmail === clean ||
-        pName === clean ||
-        (clean.length >= 4 && pId.includes(clean))
+        (pAbha && (pAbha === clean || pAbhaAlpha === cleanAlpha))
       );
     });
   }

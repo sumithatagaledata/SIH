@@ -120,33 +120,59 @@ export const HospitalPortalSuite: React.FC = () => {
       return;
     }
 
+    // Check permission / authorization
+    const isAuthorized = forceBreakGlass || db.isHospitalAuthorizedForPatient(currentHospitalId, patient.patientId);
+
     // Retrieve full clinical records from database
     const sessions = db.getClinicalSessionsForPatient(patient.patientId);
     const documents = db.getDocuments(patient.patientId);
     const consents = db.getConsents(patient.id);
 
-    setVerifiedPatient({
-      status: 'AUTHORIZED',
-      profile: patient,
-      sessions,
-      documents,
-      consents,
-      searchId: idToSearch,
-      isBreakGlass: forceBreakGlass
-    });
+    if (isAuthorized) {
+      setVerifiedPatient({
+        status: 'AUTHORIZED',
+        profile: patient,
+        sessions,
+        documents,
+        consents,
+        searchId: idToSearch,
+        isBreakGlass: forceBreakGlass
+      });
 
-    db.logAction(
-      currentUser?.id || 'hosp-admin',
-      currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Reception Desk',
-      'HOSPITAL_ADMIN',
-      'RECORD_VIEWED',
-      'PatientProfile',
-      patient.id,
-      `Hospital verified and loaded Patient record for ID: ${patient.patientId} (${patient.fullName})`
-    );
+      db.logAction(
+        currentUser?.id || 'hosp-admin',
+        currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Reception Desk',
+        'HOSPITAL_ADMIN',
+        'RECORD_VIEWED',
+        'PatientProfile',
+        patient.id,
+        `Hospital verified and loaded Patient record for ID: ${patient.patientId} (${patient.fullName})`
+      );
 
-    setIsVerifying(false);
-    showToast('✅ Patient Found', `Retrieved verified medical records for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
+      setIsVerifying(false);
+      showToast('✅ Patient Found', `Retrieved verified medical records for ${patient.fullName || patient.patientId}.`, 'VERIFICATION');
+    } else {
+      // Check if there is an access request pending
+      const requests = cloudDataService.getAccessRequests();
+      const existingReq = requests.find(
+        r => r.patientId === patient.patientId &&
+        (r.hospitalId === currentHospitalId || r.hospitalName === currentHospitalName) &&
+        r.status === 'PENDING'
+      );
+
+      setVerifiedPatient({
+        status: existingReq ? 'REQUEST_PENDING' : 'UNAUTHORIZED',
+        profile: patient,
+        sessions: [],
+        documents: [],
+        consents: [],
+        searchId: idToSearch,
+        accessRequest: existingReq
+      });
+
+      setIsVerifying(false);
+      showToast('🔒 Access Restricted', `Patient found (${patient.patientId}), but this hospital does not currently have data sharing permission.`, 'INFO');
+    }
   };
 
   const handleRequestAccess = async (patient: PatientProfile) => {
@@ -515,36 +541,34 @@ export const HospitalPortalSuite: React.FC = () => {
               </button>
             </div>
 
-            {/* Quick Sample Tags */}
-            <div className="flex items-center gap-2 flex-wrap text-xs pt-1">
-              <span className="text-slate-400 font-medium">Quick Try Patient IDs:</span>
-              {[
-                { id: 'MB-2026-7F42K9', name: 'Priya Sharma (Asthma / Cardiac)' },
-                { id: 'MB-2026-38491A', name: 'Amitabh Sen (Post-Op Spine)' },
-                { id: 'MB-2026-99210B', name: 'Meera Nair (Hypertension)' }
-              ].map(s => (
-                <button
-                  key={s.id}
-                  onClick={() => {
-                    setPatientIdInput(s.id);
-                    handleVerifyPatient(s.id);
-                  }}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 hover:border-teal-300 border border-slate-200 text-slate-700 rounded-lg font-mono text-[11px] font-bold transition flex items-center gap-1 shadow-sm"
-                >
-                  <span>{s.id}</span>
-                  <span className="text-[10px] text-slate-500 font-sans font-normal">({s.name.split(' ')[0]})</span>
-                </button>
-              ))}
-            </div>
+            {/* Registered Patients in Database */}
+            {db.getPatients().length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap text-xs pt-1">
+                <span className="text-slate-400 font-medium">Registered Patient IDs:</span>
+                {db.getPatients().slice(0, 3).map(s => (
+                  <button
+                    key={s.id || s.patientId}
+                    onClick={() => {
+                      setPatientIdInput(s.patientId);
+                      handleVerifyPatient(s.patientId);
+                    }}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 hover:border-teal-300 border border-slate-200 text-slate-700 rounded-lg font-mono text-[11px] font-bold transition flex items-center gap-1 shadow-sm"
+                  >
+                    <span>{s.patientId}</span>
+                    <span className="text-[10px] text-slate-500 font-sans font-normal">({(s.fullName || 'Patient').split(' ')[0]})</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 1. NOT FOUND */}
           {verifiedPatient && verifiedPatient.status === 'NOT_FOUND' && (
             <div className="p-8 bg-red-50 border border-red-200 rounded-3xl text-center space-y-3 animate-scale-up shadow-sm">
               <XCircle className="w-12 h-12 text-red-500 mx-auto" />
-              <h4 className="text-base font-extrabold text-red-900">No patient record found for this Patient ID</h4>
+              <h4 className="text-base font-extrabold text-red-900">Patient Not Found</h4>
               <p className="text-xs text-red-700 max-w-md mx-auto">
-                No registered patient in the database matches <strong>"{verifiedPatient.searchId}"</strong>. Please verify the Patient ID with the patient.
+                No patient was found with this Patient ID. Please verify the ID and try again.
               </p>
             </div>
           )}
