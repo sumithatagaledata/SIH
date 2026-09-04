@@ -1,6 +1,56 @@
 // Vercel Serverless Function: /api/trusted-hospitals
-const CLOUD_ENDPOINT = 'https://api.restful-api.dev/objects';
-const TRUSTED_HOSPITALS_OBJECT_ID = 'ff808181a067127101a0671ee6fc0029';
+const CLOUD_SYNC_ENDPOINT = 'https://ntfy.sh/medibridge_cloud_db_v4';
+
+async function fetchAllTrustedHospitals(): Promise<any[]> {
+  try {
+    const res = await fetch(`${CLOUD_SYNC_ENDPOINT}/json?poll=1&since=24h`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const text = await res.text();
+    const map = new Map<string, any>();
+
+    text.trim().split('\n').forEach(l => {
+      try {
+        const item = JSON.parse(l);
+        if (item.message) {
+          const parsed = JSON.parse(item.message);
+          if (parsed.type === 'TRUSTED_HOSPITALS_UPDATE' && Array.isArray(parsed.items)) {
+            parsed.items.forEach((t: any) => {
+              if (t.id) map.set(t.id, t);
+            });
+          }
+        }
+      } catch {}
+    });
+
+    return Array.from(map.values());
+  } catch {
+    return [];
+  }
+}
+
+async function saveTrustedHospitalToCloud(record: any): Promise<boolean> {
+  try {
+    const items = await fetchAllTrustedHospitals();
+    const filtered = items.filter((t: any) => !(t.id === record.id || (t.patientId === record.patientId && t.hospitalId === record.hospitalId)));
+    filtered.unshift(record);
+
+    const res = await fetch(CLOUD_SYNC_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: 'medibridge_cloud_db_v4',
+        message: JSON.stringify({
+          type: 'TRUSTED_HOSPITALS_UPDATE',
+          items: filtered,
+          updatedAt: new Date().toISOString()
+        })
+      })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -18,24 +68,19 @@ export default async function handler(req: any, res: any) {
 
   if (req.method === 'GET') {
     try {
-      const response = await fetch(`${CLOUD_ENDPOINT}/${TRUSTED_HOSPITALS_OBJECT_ID}`);
-      if (response.ok) {
-        const json = await response.json();
-        const items = Array.isArray(json?.data?.items) ? json.data.items : [];
-        const pId = req.query?.patientId;
-        if (pId) {
-          const clean = String(pId).trim().toUpperCase();
-          const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
-          const filtered = items.filter((t: any) => {
-            const tp = (t.patientId || '').trim().toUpperCase();
-            const tpAlpha = tp.replace(/[^A-Z0-9]/g, '');
-            return tp === clean || tpAlpha === cleanAlpha || (t.patientProfileId && t.patientProfileId.trim().toUpperCase() === clean);
-          });
-          return res.status(200).json({ success: true, count: filtered.length, trustedHospitals: filtered });
-        }
-        return res.status(200).json({ success: true, count: items.length, trustedHospitals: items });
+      const items = await fetchAllTrustedHospitals();
+      const pId = req.query?.patientId;
+      if (pId) {
+        const clean = String(pId).trim().toUpperCase();
+        const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+        const filtered = items.filter((t: any) => {
+          const tp = (t.patientId || '').trim().toUpperCase();
+          const tpAlpha = tp.replace(/[^A-Z0-9]/g, '');
+          return tp === clean || tpAlpha === cleanAlpha || (t.patientProfileId && t.patientProfileId.trim().toUpperCase() === clean);
+        });
+        return res.status(200).json({ success: true, count: filtered.length, trustedHospitals: filtered });
       }
-      return res.status(200).json({ success: true, count: 0, trustedHospitals: [] });
+      return res.status(200).json({ success: true, count: items.length, trustedHospitals: items });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -48,27 +93,8 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ success: false, error: 'id is required' });
       }
 
-      // Fetch current list
-      const getRes = await fetch(`${CLOUD_ENDPOINT}/${TRUSTED_HOSPITALS_OBJECT_ID}`);
-      let items = [];
-      if (getRes.ok) {
-        const json = await getRes.json();
-        items = Array.isArray(json?.data?.items) ? json.data.items : [];
-      }
-
-      const filtered = items.filter((t: any) => !(t.id === record.id || (t.patientId === record.patientId && t.hospitalId === record.hospitalId)));
-      filtered.unshift(record);
-
-      const putRes = await fetch(`${CLOUD_ENDPOINT}/${TRUSTED_HOSPITALS_OBJECT_ID}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'medibridge_trusted_hospitals_v1',
-          data: { items: filtered }
-        })
-      });
-
-      if (putRes.ok) {
+      const ok = await saveTrustedHospitalToCloud(record);
+      if (ok) {
         return res.status(200).json({ success: true, record });
       }
       return res.status(500).json({ success: false, error: 'Failed to update trusted hospitals' });

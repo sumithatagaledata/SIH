@@ -1,6 +1,46 @@
 // Vercel Serverless Function: /api/access-requests
-const CLOUD_ENDPOINT = 'https://api.restful-api.dev/objects';
-const ACCESS_REQUESTS_OBJECT_ID = 'ff808181a067127101a0671ee66d0028';
+// Central Persistent Access Requests & Consent Management
+
+const CLOUD_SYNC_ENDPOINT = 'https://ntfy.sh/medibridge_cloud_db_v4';
+
+async function fetchAccessRequestsFromCloud(): Promise<any[]> {
+  try {
+    const res = await fetch(`${CLOUD_SYNC_ENDPOINT}/json?poll=1&since=24h`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const text = await res.text();
+    const map = new Map<string, any>();
+
+    text.trim().split('\n').forEach(l => {
+      try {
+        const item = JSON.parse(l);
+        if (item.message) {
+          const parsed = JSON.parse(item.message);
+          if (parsed.type === 'SAVE_ACCESS_REQUEST' && (parsed.req || parsed.data)) {
+            const req = parsed.req || parsed.data;
+            if (req.id) map.set(req.id, req);
+          }
+        }
+      } catch {}
+    });
+
+    return Array.from(map.values()).reverse();
+  } catch {
+    return [];
+  }
+}
+
+async function saveAccessRequestToCloud(req: any): Promise<boolean> {
+  try {
+    const res = await fetch(CLOUD_SYNC_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Title': 'SAVE_ACCESS_REQUEST', 'Priority': 'urgent' },
+      body: JSON.stringify({ type: 'SAVE_ACCESS_REQUEST', req, data: req, ts: Date.now() })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -17,16 +57,17 @@ export default async function handler(req: any, res: any) {
   }
 
   if (req.method === 'GET') {
+    const patientId = req.query?.patientId;
     try {
-      const response = await fetch(`${CLOUD_ENDPOINT}/${ACCESS_REQUESTS_OBJECT_ID}`);
-      if (response.ok) {
-        const json = await response.json();
-        const items = Array.isArray(json?.data?.items) ? json.data.items : [];
-        return res.status(200).json({ success: true, count: items.length, requests: items });
+      const items = await fetchAccessRequestsFromCloud();
+      if (patientId) {
+        const clean = String(patientId).trim().toUpperCase();
+        const filtered = items.filter(r => (r.patientId || '').trim().toUpperCase() === clean);
+        return res.status(200).json({ success: true, count: filtered.length, requests: filtered });
       }
-      return res.status(200).json({ success: true, count: 0, requests: [] });
+      return res.status(200).json({ success: true, count: items.length, requests: items });
     } catch (err: any) {
-      return res.status(500).json({ success: false, error: err.message });
+      return res.status(500).json({ success: false, error: err.message, requests: [] });
     }
   }
 
@@ -37,27 +78,8 @@ export default async function handler(req: any, res: any) {
         return res.status(400).json({ success: false, error: 'id is required' });
       }
 
-      // Fetch current list
-      const getRes = await fetch(`${CLOUD_ENDPOINT}/${ACCESS_REQUESTS_OBJECT_ID}`);
-      let items = [];
-      if (getRes.ok) {
-        const json = await getRes.json();
-        items = Array.isArray(json?.data?.items) ? json.data.items : [];
-      }
-
-      const filtered = items.filter((r: any) => r.id !== reqData.id);
-      filtered.unshift(reqData);
-
-      const putRes = await fetch(`${CLOUD_ENDPOINT}/${ACCESS_REQUESTS_OBJECT_ID}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'medibridge_access_requests_v1',
-          data: { items: filtered }
-        })
-      });
-
-      if (putRes.ok) {
+      const ok = await saveAccessRequestToCloud(reqData);
+      if (ok) {
         return res.status(200).json({ success: true, request: reqData });
       }
       return res.status(500).json({ success: false, error: 'Failed to update access requests' });
