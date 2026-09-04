@@ -803,14 +803,14 @@ export const HospitalPortalSuite: React.FC = () => {
                     </div>
 
                     <p className="text-xs text-slate-600">
-                      Age: <strong className="text-slate-900">{verifiedPatient.profile.age || 32} yrs</strong> • 
-                      Gender: <strong className="text-slate-900">{verifiedPatient.profile.gender || 'Female'}</strong> • 
-                      Blood Group: <strong className="text-red-600 font-bold">{verifiedPatient.profile.bloodGroup || 'O+'}</strong> • 
-                      City: <strong className="text-slate-900">{verifiedPatient.profile.city || 'Talegaon Dabhade'}</strong>
+                      Age: <strong className="text-slate-900">{verifiedPatient.profile.age || (verifiedPatient.profile.dob ? new Date().getFullYear() - new Date(verifiedPatient.profile.dob).getFullYear() : '—')} yrs</strong> • 
+                      Gender: <strong className="text-slate-900">{verifiedPatient.profile.gender || '—'}</strong> • 
+                      Blood Group: <strong className="text-red-600 font-bold">{verifiedPatient.profile.bloodGroup || '—'}</strong> • 
+                      City: <strong className="text-slate-900">{verifiedPatient.profile.city || verifiedPatient.profile.address || '—'}</strong>
                     </p>
 
                     <p className="text-[11px] text-slate-500">
-                      Emergency Contact: <strong className="text-slate-700">{verifiedPatient.profile.emergencyContactName || 'Family Member'}</strong> ({verifiedPatient.profile.emergencyContactPhone || '+91 98230 44812'})
+                      Emergency Contact: <strong className="text-slate-700">{verifiedPatient.profile.emergencyContactName || 'None listed'}</strong> {verifiedPatient.profile.emergencyContactPhone ? `(${verifiedPatient.profile.emergencyContactPhone})` : ''} {verifiedPatient.profile.emergencyContactRelation ? `• ${verifiedPatient.profile.emergencyContactRelation}` : ''}
                     </p>
                   </div>
                 </div>

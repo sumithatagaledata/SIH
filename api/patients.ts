@@ -97,6 +97,7 @@ export default async function handler(req: any, res: any) {
           const pAbhaAlpha = pAbha.replace(/[^A-Z0-9]/g, '');
           const pEmail = (p.email || '').trim().toLowerCase();
           const pPhone = (p.phone || p.emergencyContactPhone || '').replace(/[^0-9]/g, '');
+          const queryNumeric = cleanId.replace(/[^0-9]/g, '');
           const queryCore = cleanAlpha.length >= 6 ? cleanAlpha.slice(-6) : cleanAlpha;
           const pCore = pIdAlpha.length >= 6 ? pIdAlpha.slice(-6) : pIdAlpha;
           const isCoreMatch = queryCore.length >= 4 && queryCore === pCore;
