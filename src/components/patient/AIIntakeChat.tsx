@@ -253,24 +253,29 @@ export const AIIntakeChat: React.FC<AIIntakeChatProps> = ({
         setIsIntakeDone(true);
         setCurrentPriority(result.suggestedTriagePriority);
 
+        const pRealId = patientProfile?.patientId || patientProfile?.id || (currentUser ? `pat-${currentUser.id}` : 'PAT-2026-001');
+        const trustedHospitals = db.getTrustedHospitals(pRealId).filter(t => t.status === 'ACTIVE');
+        const registeredHospitals = db.getHospitals();
+        const targetHospitalId = trustedHospitals[0]?.hospitalId || (registeredHospitals.length > 0 ? registeredHospitals[0].id : 'HOSP-2026-00101');
+
         // Synthesize structured clinical summary with language metadata
         const summary = AIIntakeEngine.generateStructuredSummary(
           activeSessionId,
-          patientProfile?.id || (currentUser ? `pat-${currentUser.id}` : 'pat-001'),
+          pRealId,
           userMsg.text,
           updatedHistory.map(m => `${m.sender}: ${m.text}`).join('\n'),
-          [],
+          patientProfile?.allergies?.map(a => ({ allergen: a, type: 'OTHER' as const, reaction: 'Documented in profile', severity: 'MODERATE' as const })) || [],
           [],
           language
         );
 
         const newSession: ClinicalSession = {
           id: activeSessionId,
-          patientId: patientProfile?.id || (currentUser ? `pat-${currentUser.id}` : 'pat-001'),
-          patientName: currentUser?.fullName || 'Registered Patient',
+          patientId: pRealId,
+          patientName: currentUser?.fullName || patientProfile?.fullName || 'Registered Patient',
           patientAge: patientProfile?.age || 35,
           patientGender: patientProfile?.gender || 'Male',
-          patientPhone: currentUser?.phone || '+91 98000 00000',
+          patientPhone: currentUser?.phone || patientProfile?.emergencyContactPhone || '+91 98000 00000',
           startedAt: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
           completedAt: new Date().toISOString(),
           status: result.isRedFlagTriggered ? 'EMERGENCY_TRIGGERED' : 'COMPLETED',
@@ -282,8 +287,8 @@ export const AIIntakeChat: React.FC<AIIntakeChatProps> = ({
           originalLanguage: language,
           originalPatientStatement: userMsg.text,
           translatedSummary: result.translatedConcern || userMsg.text,
-          selectedHospitalId: 'hosp-001',
-          selectedDepartmentId: 'dept-002',
+          selectedHospitalId: targetHospitalId,
+          selectedDepartmentId: 'dept-001',
           targetDoctorId: 'doc-001',
           redFlagsDetected: result.redFlagsDetected,
           isRedFlagTriggered: result.isRedFlagTriggered,

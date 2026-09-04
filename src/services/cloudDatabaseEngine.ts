@@ -1,5 +1,10 @@
-// MediBridge AI: Universal Persistent Cloud Database Engine
-// Single Source of Truth for Patient, Hospital, Admin, and Search across all devices.
+import {
+  ClinicalSession,
+  MedicalDocument,
+  EmergencyAlert,
+  TimelineEvent,
+  Appointment
+} from '../types';
 
 export interface CloudPatientRecord {
   id: string;
@@ -91,6 +96,11 @@ const LOCAL_PERSIST_KEYS = {
   HOSPITALS: 'medibridge_cloud_hospitals_cache',
   REQUESTS: 'medibridge_cloud_requests_cache',
   TRUSTED: 'medibridge_cloud_trusted_cache',
+  SESSIONS: 'medibridge_cloud_sessions_cache',
+  DOCUMENTS: 'medibridge_cloud_documents_cache',
+  EMERGENCIES: 'medibridge_cloud_emergencies_cache',
+  TIMELINE: 'medibridge_cloud_timeline_cache',
+  APPOINTMENTS: 'medibridge_cloud_appointments_cache',
 };
 
 function getPersistedCache<T>(key: string): T[] {
@@ -122,6 +132,11 @@ class CloudDatabaseEngine {
   private hospitalsCache: CloudHospitalRecord[] = [];
   private accessRequestsCache: CloudAccessRequestRecord[] = [];
   private trustedHospitalsCache: CloudTrustedHospitalRecord[] = [];
+  private sessionsCache: ClinicalSession[] = [];
+  private documentsCache: MedicalDocument[] = [];
+  private emergenciesCache: EmergencyAlert[] = [];
+  private timelineCache: TimelineEvent[] = [];
+  private appointmentsCache: Appointment[] = [];
   private sseClient: EventSource | null = null;
   private isInitialized = false;
 
@@ -131,6 +146,11 @@ class CloudDatabaseEngine {
     this.hospitalsCache = getPersistedCache<CloudHospitalRecord>(LOCAL_PERSIST_KEYS.HOSPITALS);
     this.accessRequestsCache = getPersistedCache<CloudAccessRequestRecord>(LOCAL_PERSIST_KEYS.REQUESTS);
     this.trustedHospitalsCache = getPersistedCache<CloudTrustedHospitalRecord>(LOCAL_PERSIST_KEYS.TRUSTED);
+    this.sessionsCache = getPersistedCache<ClinicalSession>(LOCAL_PERSIST_KEYS.SESSIONS);
+    this.documentsCache = getPersistedCache<MedicalDocument>(LOCAL_PERSIST_KEYS.DOCUMENTS);
+    this.emergenciesCache = getPersistedCache<EmergencyAlert>(LOCAL_PERSIST_KEYS.EMERGENCIES);
+    this.timelineCache = getPersistedCache<TimelineEvent>(LOCAL_PERSIST_KEYS.TIMELINE);
+    this.appointmentsCache = getPersistedCache<Appointment>(LOCAL_PERSIST_KEYS.APPOINTMENTS);
     this.startLiveCrossDeviceSync();
   }
 
@@ -160,8 +180,8 @@ class CloudDatabaseEngine {
 
   private handleIncomingCloudEvent(eventData: any) {
     if (!eventData || !eventData.type) return;
-    const { type, data, patient, hospital, req, trusted } = eventData;
-    const payload = data || patient || hospital || req || trusted;
+    const { type, data, patient, hospital, req, trusted, session, document, alert, event, appointment } = eventData;
+    const payload = data || patient || hospital || req || trusted || session || document || alert || event || appointment;
     if (!payload) return;
 
     let updated = false;
@@ -199,6 +219,76 @@ class CloudDatabaseEngine {
       filtered.unshift(payload);
       this.trustedHospitalsCache = filtered;
       setPersistedCache(LOCAL_PERSIST_KEYS.TRUSTED, filtered);
+      updated = true;
+    } else if (type === 'SAVE_CLINICAL_SESSION' && payload.id) {
+      const filtered = this.sessionsCache.filter(s => s.id !== payload.id);
+      filtered.unshift(payload);
+      this.sessionsCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.SESSIONS, filtered);
+      try {
+        const raw = localStorage.getItem('medibridge_sessions');
+        const list: ClinicalSession[] = raw ? JSON.parse(raw) : [];
+        const idx = list.findIndex(s => s.id === payload.id);
+        if (idx >= 0) list[idx] = payload;
+        else list.unshift(payload);
+        localStorage.setItem('medibridge_sessions', JSON.stringify(list));
+      } catch {}
+      updated = true;
+    } else if (type === 'SAVE_DOCUMENT' && payload.id) {
+      const filtered = this.documentsCache.filter(d => d.id !== payload.id);
+      filtered.unshift(payload);
+      this.documentsCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.DOCUMENTS, filtered);
+      try {
+        const raw = localStorage.getItem('medibridge_documents');
+        const list: MedicalDocument[] = raw ? JSON.parse(raw) : [];
+        const idx = list.findIndex(d => d.id === payload.id);
+        if (idx >= 0) list[idx] = payload;
+        else list.unshift(payload);
+        localStorage.setItem('medibridge_documents', JSON.stringify(list));
+      } catch {}
+      updated = true;
+    } else if (type === 'SAVE_EMERGENCY_ALERT' && payload.id) {
+      const filtered = this.emergenciesCache.filter(e => e.id !== payload.id);
+      filtered.unshift(payload);
+      this.emergenciesCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.EMERGENCIES, filtered);
+      try {
+        const raw = localStorage.getItem('medibridge_emergencies');
+        const list: EmergencyAlert[] = raw ? JSON.parse(raw) : [];
+        const idx = list.findIndex(e => e.id === payload.id);
+        if (idx >= 0) list[idx] = payload;
+        else list.unshift(payload);
+        localStorage.setItem('medibridge_emergencies', JSON.stringify(list));
+      } catch {}
+      updated = true;
+    } else if (type === 'SAVE_TIMELINE_EVENT' && payload.id) {
+      const filtered = this.timelineCache.filter(t => t.id !== payload.id);
+      filtered.unshift(payload);
+      this.timelineCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.TIMELINE, filtered);
+      try {
+        const raw = localStorage.getItem('medibridge_timeline');
+        const list: TimelineEvent[] = raw ? JSON.parse(raw) : [];
+        const idx = list.findIndex(t => t.id === payload.id);
+        if (idx >= 0) list[idx] = payload;
+        else list.unshift(payload);
+        localStorage.setItem('medibridge_timeline', JSON.stringify(list));
+      } catch {}
+      updated = true;
+    } else if (type === 'SAVE_APPOINTMENT' && payload.id) {
+      const filtered = this.appointmentsCache.filter(a => a.id !== payload.id);
+      filtered.unshift(payload);
+      this.appointmentsCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.APPOINTMENTS, filtered);
+      try {
+        const raw = localStorage.getItem('medibridge_appointments');
+        const list: Appointment[] = raw ? JSON.parse(raw) : [];
+        const idx = list.findIndex(a => a.id === payload.id);
+        if (idx >= 0) list[idx] = payload;
+        else list.unshift(payload);
+        localStorage.setItem('medibridge_appointments', JSON.stringify(list));
+      } catch {}
       updated = true;
     }
 
@@ -502,6 +592,126 @@ class CloudDatabaseEngine {
       const tHospName = (t.hospitalName || '').trim().toLowerCase();
       return tHospId === cleanHosp || tHospName === cleanHosp || cleanHosp.includes(tHospId) || tHospId.includes(cleanHosp);
     });
+  }
+
+  // ==========================================
+  // CLINICAL SESSIONS (Pre-Arrival Triage)
+  // ==========================================
+  public async getClinicalSessions(patientId?: string): Promise<ClinicalSession[]> {
+    await this.syncAll();
+    if (!patientId) return this.sessionsCache;
+    const clean = patientId.trim().toUpperCase();
+    const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+    return this.sessionsCache.filter(s => {
+      const sPId = (s.patientId || '').trim().toUpperCase();
+      const sPAlpha = sPId.replace(/[^A-Z0-9]/g, '');
+      return sPId === clean || sPAlpha === cleanAlpha;
+    });
+  }
+
+  public async saveClinicalSession(session: ClinicalSession): Promise<boolean> {
+    const filtered = this.sessionsCache.filter(s => s.id !== session.id);
+    filtered.unshift(session);
+    this.sessionsCache = filtered;
+    setPersistedCache(LOCAL_PERSIST_KEYS.SESSIONS, filtered);
+
+    return await this.postCloudEvent('SAVE_CLINICAL_SESSION', session);
+  }
+
+  // ==========================================
+  // MEDICAL DOCUMENTS (Cloud Vault Sync)
+  // ==========================================
+  public async getDocuments(patientId?: string): Promise<MedicalDocument[]> {
+    await this.syncAll();
+    if (!patientId) return this.documentsCache;
+    const clean = patientId.trim().toUpperCase();
+    const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+    return this.documentsCache.filter(d => {
+      const dPId = (d.patientId || '').trim().toUpperCase();
+      const dPAlpha = dPId.replace(/[^A-Z0-9]/g, '');
+      return dPId === clean || dPAlpha === cleanAlpha;
+    });
+  }
+
+  public async saveDocument(doc: MedicalDocument): Promise<boolean> {
+    const filtered = this.documentsCache.filter(d => d.id !== doc.id);
+    filtered.unshift(doc);
+    this.documentsCache = filtered;
+    setPersistedCache(LOCAL_PERSIST_KEYS.DOCUMENTS, filtered);
+
+    return await this.postCloudEvent('SAVE_DOCUMENT', doc);
+  }
+
+  // ==========================================
+  // EMERGENCY ALERTS (Cross-Device ER Broadcast)
+  // ==========================================
+  public async getEmergencyAlerts(patientId?: string): Promise<EmergencyAlert[]> {
+    await this.syncAll();
+    if (!patientId) return this.emergenciesCache;
+    const clean = patientId.trim().toUpperCase();
+    const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+    return this.emergenciesCache.filter(e => {
+      const ePId = (e.patientId || '').trim().toUpperCase();
+      const ePAlpha = ePId.replace(/[^A-Z0-9]/g, '');
+      return ePId === clean || ePAlpha === cleanAlpha;
+    });
+  }
+
+  public async saveEmergencyAlert(alert: EmergencyAlert): Promise<boolean> {
+    const filtered = this.emergenciesCache.filter(e => e.id !== alert.id);
+    filtered.unshift(alert);
+    this.emergenciesCache = filtered;
+    setPersistedCache(LOCAL_PERSIST_KEYS.EMERGENCIES, filtered);
+
+    return await this.postCloudEvent('SAVE_EMERGENCY_ALERT', alert);
+  }
+
+  // ==========================================
+  // TIMELINE EVENTS (Longitudinal History)
+  // ==========================================
+  public async getTimelineEvents(patientId?: string): Promise<TimelineEvent[]> {
+    await this.syncAll();
+    if (!patientId) return this.timelineCache;
+    const clean = patientId.trim().toUpperCase();
+    const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+    return this.timelineCache.filter(t => {
+      const tPId = (t.patientId || '').trim().toUpperCase();
+      const tPAlpha = tPId.replace(/[^A-Z0-9]/g, '');
+      return tPId === clean || tPAlpha === cleanAlpha;
+    });
+  }
+
+  public async saveTimelineEvent(evt: TimelineEvent): Promise<boolean> {
+    const filtered = this.timelineCache.filter(t => t.id !== evt.id);
+    filtered.unshift(evt);
+    this.timelineCache = filtered;
+    setPersistedCache(LOCAL_PERSIST_KEYS.TIMELINE, filtered);
+
+    return await this.postCloudEvent('SAVE_TIMELINE_EVENT', evt);
+  }
+
+  // ==========================================
+  // APPOINTMENTS
+  // ==========================================
+  public async getAppointments(patientId?: string): Promise<Appointment[]> {
+    await this.syncAll();
+    if (!patientId) return this.appointmentsCache;
+    const clean = patientId.trim().toUpperCase();
+    const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+    return this.appointmentsCache.filter(a => {
+      const aPId = (a.patientId || '').trim().toUpperCase();
+      const aPAlpha = aPId.replace(/[^A-Z0-9]/g, '');
+      return aPId === clean || aPAlpha === cleanAlpha;
+    });
+  }
+
+  public async saveAppointment(apt: Appointment): Promise<boolean> {
+    const filtered = this.appointmentsCache.filter(a => a.id !== apt.id);
+    filtered.unshift(apt);
+    this.appointmentsCache = filtered;
+    setPersistedCache(LOCAL_PERSIST_KEYS.APPOINTMENTS, filtered);
+
+    return await this.postCloudEvent('SAVE_APPOINTMENT', apt);
   }
 }
 

@@ -4,6 +4,7 @@ import {
   Appointment, ConsentRecord, AuditLog, AppNotification, TriagePriority,
   ClinicalHistorySummary, HospitalAccount, TrustedHospital
 } from '../types';
+import { cloudDb } from './cloudDatabaseEngine';
 
 const STORAGE_KEYS = {
   USERS: 'medibridge_users',
@@ -846,7 +847,16 @@ export class MockDatabase {
 
   // Clinical Sessions
   public getClinicalSessions(): ClinicalSession[] {
-    return this.getItems<ClinicalSession>(STORAGE_KEYS.SESSIONS);
+    const local = this.getItems<ClinicalSession>(STORAGE_KEYS.SESSIONS);
+    let cloudSessions: ClinicalSession[] = [];
+    try {
+      const cached = getStorageItem('medibridge_cloud_sessions_cache');
+      if (cached) cloudSessions = JSON.parse(cached);
+    } catch {}
+    const map = new Map<string, ClinicalSession>();
+    cloudSessions.forEach(s => map.set(s.id, s));
+    local.forEach(s => map.set(s.id, s));
+    return Array.from(map.values()).sort((a, b) => new Date(b.completedAt || b.startedAt).getTime() - new Date(a.completedAt || a.startedAt).getTime());
   }
 
   public getClinicalSessionById(id: string): ClinicalSession | undefined {
@@ -862,11 +872,25 @@ export class MockDatabase {
       sessions.unshift(session);
     }
     this.setItems(STORAGE_KEYS.SESSIONS, sessions);
+    cloudDb.saveClinicalSession(session);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'SAVE_CLINICAL_SESSION', session } }));
+    }
   }
 
   // Documents
   public getDocuments(patientIdOrCode?: string): MedicalDocument[] {
-    const docs = this.getItems<MedicalDocument>(STORAGE_KEYS.DOCUMENTS);
+    const local = this.getItems<MedicalDocument>(STORAGE_KEYS.DOCUMENTS);
+    let cloudDocs: MedicalDocument[] = [];
+    try {
+      const cached = getStorageItem('medibridge_cloud_documents_cache');
+      if (cached) cloudDocs = JSON.parse(cached);
+    } catch {}
+    const map = new Map<string, MedicalDocument>();
+    cloudDocs.forEach(d => map.set(d.id, d));
+    local.forEach(d => map.set(d.id, d));
+    const docs = Array.from(map.values()).sort((a, b) => new Date(b.uploadDate).getTime() - new Date(a.uploadDate).getTime());
+
     if (!patientIdOrCode) return docs;
     const clean = patientIdOrCode.trim().toUpperCase();
     const patientProfile = this.getPatientByPatientId(clean) || this.getPatientById(patientIdOrCode);
@@ -879,14 +903,33 @@ export class MockDatabase {
   }
 
   public addDocument(doc: MedicalDocument): void {
-    const docs = this.getItems<MedicalDocument>(STORAGE_KEYS.DOCUMENTS);
-    docs.unshift(doc);
+    const docs = this.getDocuments();
+    const index = docs.findIndex(d => d.id === doc.id);
+    if (index >= 0) {
+      docs[index] = doc;
+    } else {
+      docs.unshift(doc);
+    }
     this.setItems(STORAGE_KEYS.DOCUMENTS, docs);
+    cloudDb.saveDocument(doc);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'SAVE_DOCUMENT', doc } }));
+    }
   }
 
   // Timeline
   public getTimeline(patientIdOrCode?: string): TimelineEvent[] {
-    const events = this.getItems<TimelineEvent>(STORAGE_KEYS.TIMELINE);
+    const local = this.getItems<TimelineEvent>(STORAGE_KEYS.TIMELINE);
+    let cloudEvents: TimelineEvent[] = [];
+    try {
+      const cached = getStorageItem('medibridge_cloud_timeline_cache');
+      if (cached) cloudEvents = JSON.parse(cached);
+    } catch {}
+    const map = new Map<string, TimelineEvent>();
+    cloudEvents.forEach(e => map.set(e.id, e));
+    local.forEach(e => map.set(e.id, e));
+    const events = Array.from(map.values());
+
     if (!patientIdOrCode) return events.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const clean = patientIdOrCode.trim().toUpperCase();
     const patientProfile = this.getPatientByPatientId(clean) || this.getPatientById(patientIdOrCode);
@@ -900,9 +943,18 @@ export class MockDatabase {
   }
 
   public addTimelineEvent(event: TimelineEvent): void {
-    const events = this.getItems<TimelineEvent>(STORAGE_KEYS.TIMELINE);
-    events.unshift(event);
+    const events = this.getTimeline();
+    const index = events.findIndex(e => e.id === event.id);
+    if (index >= 0) {
+      events[index] = event;
+    } else {
+      events.unshift(event);
+    }
     this.setItems(STORAGE_KEYS.TIMELINE, events);
+    cloudDb.saveTimelineEvent(event);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'SAVE_TIMELINE_EVENT', event } }));
+    }
   }
 
   public getClinicalSessionsForPatient(patientIdOrCode: string): ClinicalSession[] {
@@ -919,7 +971,16 @@ export class MockDatabase {
 
   // Emergencies
   public getEmergencyAlerts(): EmergencyAlert[] {
-    return this.getItems<EmergencyAlert>(STORAGE_KEYS.EMERGENCIES);
+    const local = this.getItems<EmergencyAlert>(STORAGE_KEYS.EMERGENCIES);
+    let cloudAlerts: EmergencyAlert[] = [];
+    try {
+      const cached = getStorageItem('medibridge_cloud_emergencies_cache');
+      if (cached) cloudAlerts = JSON.parse(cached);
+    } catch {}
+    const map = new Map<string, EmergencyAlert>();
+    cloudAlerts.forEach(a => map.set(a.id, a));
+    local.forEach(a => map.set(a.id, a));
+    return Array.from(map.values()).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
   public saveEmergencyAlert(alert: EmergencyAlert): void {
@@ -931,11 +992,25 @@ export class MockDatabase {
       alerts.unshift(alert);
     }
     this.setItems(STORAGE_KEYS.EMERGENCIES, alerts);
+    cloudDb.saveEmergencyAlert(alert);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'SAVE_EMERGENCY_ALERT', alert } }));
+    }
   }
 
   // Appointments
   public getAppointments(patientIdOrCode?: string): Appointment[] {
-    const apts = this.getItems<Appointment>(STORAGE_KEYS.APPOINTMENTS);
+    const local = this.getItems<Appointment>(STORAGE_KEYS.APPOINTMENTS);
+    let cloudApts: Appointment[] = [];
+    try {
+      const cached = getStorageItem('medibridge_cloud_appointments_cache');
+      if (cached) cloudApts = JSON.parse(cached);
+    } catch {}
+    const map = new Map<string, Appointment>();
+    cloudApts.forEach(a => map.set(a.id, a));
+    local.forEach(a => map.set(a.id, a));
+    const apts = Array.from(map.values()).sort((a, b) => new Date(b.date + ' ' + (b.timeSlot || '')).getTime() - new Date(a.date + ' ' + (a.timeSlot || '')).getTime());
+
     if (!patientIdOrCode) return apts;
     const clean = patientIdOrCode.trim().toUpperCase();
     const patientProfile = this.getPatientByPatientId(clean) || this.getPatientById(patientIdOrCode);
@@ -948,9 +1023,18 @@ export class MockDatabase {
   }
 
   public addAppointment(apt: Appointment): void {
-    const apts = this.getItems<Appointment>(STORAGE_KEYS.APPOINTMENTS);
-    apts.unshift(apt);
+    const apts = this.getAppointments();
+    const index = apts.findIndex(a => a.id === apt.id);
+    if (index >= 0) {
+      apts[index] = apt;
+    } else {
+      apts.unshift(apt);
+    }
     this.setItems(STORAGE_KEYS.APPOINTMENTS, apts);
+    cloudDb.saveAppointment(apt);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'SAVE_APPOINTMENT', apt } }));
+    }
   }
 
   // Consents

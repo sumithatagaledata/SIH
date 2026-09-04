@@ -11,17 +11,37 @@ import { AmbulanceDispatchMap } from './AmbulanceDispatchMap';
 
 export const EmergencyCommandCenter: React.FC = () => {
   const { showToast } = useNotification();
-  const [alerts, setAlerts] = useState<EmergencyAlert[]>(db.getEmergencyAlerts());
-  const [selectedAlert, setSelectedAlert] = useState<EmergencyAlert>(alerts[0]);
+  const [alerts, setAlerts] = useState<EmergencyAlert[]>(() => db.getEmergencyAlerts());
+  const [selectedAlert, setSelectedAlert] = useState<EmergencyAlert | null>(() => alerts[0] || null);
   const hospitals = db.getHospitals();
   const activeHospital = hospitals[0];
+
+  React.useEffect(() => {
+    const handleUpdate = () => {
+      const freshAlerts = db.getEmergencyAlerts();
+      setAlerts(freshAlerts);
+      setSelectedAlert(prev => {
+        if (!prev) return freshAlerts[0] || null;
+        const match = freshAlerts.find(a => a.id === prev.id);
+        return match || freshAlerts[0] || null;
+      });
+    };
+
+    window.addEventListener('medibridge_db_update', handleUpdate);
+    window.addEventListener('medibridge_db_reset', handleUpdate);
+    return () => {
+      window.removeEventListener('medibridge_db_update', handleUpdate);
+      window.removeEventListener('medibridge_db_reset', handleUpdate);
+    };
+  }, []);
 
   const handleUpdateStatus = (alertId: string, newStatus: EmergencyAlert['status']) => {
     const target = alerts.find(a => a.id === alertId);
     if (target) {
       target.status = newStatus;
       db.saveEmergencyAlert(target);
-      setAlerts([...db.getEmergencyAlerts()]);
+      const updatedList = db.getEmergencyAlerts();
+      setAlerts(updatedList);
       setSelectedAlert({ ...target });
       showToast('ER Status Updated', `Patient ${target.patientName} status set to ${newStatus.replace(/_/g, ' ')}.`, 'TRIAGE');
     }
