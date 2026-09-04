@@ -24,8 +24,8 @@ export const AppointmentBooker: React.FC = () => {
 
   // Location State using unified LocationHospitalService
   const [locationState, setLocationState] = useState<PatientLocationState>({
-    coordinates: { lat: 18.7303, lng: 73.6766 },
-    label: `${defaultCity}`,
+    coordinates: null,
+    label: defaultCity ? `${defaultCity}` : 'Location Not Set',
     isGps: false,
     city: defaultCity
   });
@@ -33,7 +33,7 @@ export const AppointmentBooker: React.FC = () => {
   const [locationInput, setLocationInput] = useState('');
   const [isLocating, setIsLocating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRadius, setSelectedRadius] = useState<number>(10);
+  const [selectedRadius, setSelectedRadius] = useState<number>(15);
 
   // Real API Fetch States
   const [isApiLoading, setIsApiLoading] = useState(true);
@@ -73,7 +73,12 @@ export const AppointmentBooker: React.FC = () => {
   ];
 
   // Execute real discovery via unified LocationHospitalService
-  const fetchNearbyHospitals = useCallback(async (coords: { lat: number; lng: number }, radius: number, query: string) => {
+  const fetchNearbyHospitals = useCallback(async (coords: { lat: number; lng: number } | null, radius: number, query: string) => {
+    if (!coords) {
+      setRealHospitals([]);
+      setIsApiLoading(false);
+      return;
+    }
     setIsApiLoading(true);
     setApiError(null);
     try {
@@ -84,6 +89,10 @@ export const AppointmentBooker: React.FC = () => {
       );
 
       setRealHospitals(results);
+
+      if (results.length === 0) {
+        setApiError(`No hospitals found near your current location within ${radius} km.`);
+      }
 
       // Auto-select first hospital if none selected
       if (results.length > 0 && !selectedHospital) {
@@ -99,9 +108,8 @@ export const AppointmentBooker: React.FC = () => {
         });
       }
     } catch {
-      setApiError('Unable to query hospitals. Retrying with local registry...');
-      const fallback = await LocationHospitalService.getCombinedNearbyHospitals(coords, 9999, query);
-      setRealHospitals(fallback);
+      setRealHospitals([]);
+      setApiError('Unable to load nearby hospitals. Please check your location permission or try again.');
     } finally {
       setIsApiLoading(false);
     }
@@ -117,13 +125,23 @@ export const AppointmentBooker: React.FC = () => {
         const geocoded = await LocationHospitalService.geocodeAddress(q);
         if (isMounted) {
           setLocationState(geocoded);
-          fetchNearbyHospitals(geocoded.coordinates, selectedRadius, searchQuery);
+          if (geocoded.coordinates) {
+            fetchNearbyHospitals(geocoded.coordinates, selectedRadius, searchQuery);
+          } else {
+            setIsApiLoading(false);
+            setApiError(geocoded.error || 'Location permission is required to find hospitals near you.');
+          }
         }
       } else {
         const gps = await LocationHospitalService.getCurrentGpsPosition();
         if (isMounted) {
           setLocationState(gps);
-          fetchNearbyHospitals(gps.coordinates, selectedRadius, searchQuery);
+          if (gps.coordinates) {
+            fetchNearbyHospitals(gps.coordinates, selectedRadius, searchQuery);
+          } else {
+            setIsApiLoading(false);
+            setApiError(gps.error || 'Location permission is required to find hospitals near you.');
+          }
         }
       }
     };
@@ -133,7 +151,9 @@ export const AppointmentBooker: React.FC = () => {
 
   // Refetch when radius, search, or coords change
   useEffect(() => {
-    fetchNearbyHospitals(locationState.coordinates, selectedRadius, searchQuery);
+    if (locationState.coordinates) {
+      fetchNearbyHospitals(locationState.coordinates, selectedRadius, searchQuery);
+    }
   }, [locationState.coordinates, selectedRadius, searchQuery, fetchNearbyHospitals]);
 
   const handleFetchGps = async () => {
@@ -142,9 +162,17 @@ export const AppointmentBooker: React.FC = () => {
     try {
       const state = await LocationHospitalService.getCurrentGpsPosition();
       setLocationState(state);
-      fetchNearbyHospitals(state.coordinates, selectedRadius, searchQuery);
-      showToast('GPS Locked', `Coordinates resolved: ${state.label}`, 'VERIFICATION');
+      if (state.coordinates) {
+        fetchNearbyHospitals(state.coordinates, selectedRadius, searchQuery);
+        showToast('GPS Locked', `Coordinates resolved: ${state.label}`, 'VERIFICATION');
+      } else {
+        setRealHospitals([]);
+        setApiError(state.error || 'Location permission is required to find hospitals near you.');
+        showToast('GPS Error', state.error || 'Location permission denied.', 'INFO');
+      }
     } catch (e: any) {
+      setRealHospitals([]);
+      setApiError('Unable to load nearby hospitals. Please check your location permission or try again.');
       showToast('GPS Error', e.message || 'Failed to acquire location.', 'INFO');
     } finally {
       setIsLocating(false);
@@ -159,10 +187,18 @@ export const AppointmentBooker: React.FC = () => {
     try {
       const state = await LocationHospitalService.geocodeAddress(locationInput.trim());
       setLocationState(state);
-      fetchNearbyHospitals(state.coordinates, selectedRadius, searchQuery);
-      showToast('Location Updated', `Found coordinates for ${state.label}`, 'VERIFICATION');
-      setLocationInput('');
+      if (state.coordinates) {
+        fetchNearbyHospitals(state.coordinates, selectedRadius, searchQuery);
+        showToast('Location Updated', `Found coordinates for ${state.label}`, 'VERIFICATION');
+        setLocationInput('');
+      } else {
+        setRealHospitals([]);
+        setApiError(state.error || `Could not find coordinates for "${locationInput}".`);
+        showToast('Location Error', state.error || 'Could not resolve location.', 'INFO');
+      }
     } catch (e: any) {
+      setRealHospitals([]);
+      setApiError('Unable to load nearby hospitals. Please check your location permission or try again.');
       showToast('Geocoding Error', e.message || 'Could not resolve location.', 'INFO');
     } finally {
       setIsLocating(false);
@@ -362,9 +398,9 @@ export const AppointmentBooker: React.FC = () => {
             {[
               { km: 5, label: '5 km' },
               { km: 10, label: '10 km' },
+              { km: 15, label: '15 km' },
               { km: 25, label: '25 km' },
-              { km: 50, label: '50 km' },
-              { km: 9999, label: 'All' }
+              { km: 50, label: '50 km' }
             ].map(r => (
               <button
                 key={r.km}
@@ -400,30 +436,24 @@ export const AppointmentBooker: React.FC = () => {
             <RefreshCw className="w-6 h-6 text-teal-600 animate-spin mx-auto" />
             <p className="text-xs font-bold text-teal-800">🔎 Fetching real nearby hospitals from location API...</p>
           </div>
-        ) : apiError ? (
+        ) : apiError || !locationState.coordinates ? (
           <div className="py-6 bg-amber-50 rounded-2xl border border-amber-200 text-center space-y-3 p-4">
             <AlertTriangle className="w-6 h-6 text-amber-600 mx-auto" />
-            <p className="text-xs font-bold text-amber-900">{apiError}</p>
+            <p className="text-xs font-bold text-amber-900">{apiError || 'Location permission is required to find hospitals near you.'}</p>
             <button
               type="button"
-              onClick={() => fetchNearbyHospitals(locationState.coordinates, selectedRadius, searchQuery)}
+              onClick={handleFetchGps}
               className="px-4 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 mx-auto shadow-sm hover:bg-slate-50"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Search</span>
+              <Crosshair className="w-3.5 h-3.5" />
+              <span>Use Live GPS</span>
             </button>
           </div>
         ) : realHospitals.length === 0 ? (
           <div className="py-8 bg-slate-50 rounded-2xl border border-slate-200 text-center space-y-2 p-4">
             <Building2 className="w-8 h-8 text-slate-400 mx-auto" />
-            <p className="text-xs font-bold text-slate-700">No hospitals found within {selectedRadius === 9999 ? 'search' : `${selectedRadius} km`}.</p>
-            <button
-              type="button"
-              onClick={() => { setSelectedRadius(9999); setSearchQuery(''); }}
-              className="mt-1 px-3 py-1 bg-teal-50 border border-teal-200 text-teal-800 rounded-lg text-xs font-bold transition"
-            >
-              Expand to All Distances
-            </button>
+            <p className="text-xs font-bold text-slate-700">No hospitals found near your current location.</p>
+            <p className="text-[11px] text-slate-500">Try increasing search radius to 25 km or 50 km, or enter a nearby city above.</p>
           </div>
         ) : (
           <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1 scrollbar-thin">

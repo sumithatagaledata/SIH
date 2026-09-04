@@ -402,7 +402,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!coords || (coords.lat === 0 && coords.lng === 0)) {
       const query = `${data.address} ${data.location} ${data.city} ${data.pincode || ''}`.trim();
       const geocoded = await LocationHospitalService.geocodeHospitalLocation(query);
-      coords = { lat: geocoded.lat, lng: geocoded.lng };
+      if (geocoded) {
+        coords = { lat: geocoded.lat, lng: geocoded.lng };
+      }
     }
 
     const newUser: User = {

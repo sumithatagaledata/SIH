@@ -191,11 +191,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
     showToast('GPS Sensor', 'Acquiring hospital coordinates...', 'INFO');
     try {
       const gps = await LocationHospitalService.getCurrentGpsPosition();
-      setHospCoords(gps.coordinates);
-      if (gps.city) setHospCity(gps.city);
-      if (!hospLocation) setHospLocation(gps.city || 'Local Area');
-      if (!hospAddress) setHospAddress(`Facility Location (${gps.coordinates.lat.toFixed(4)}°, ${gps.coordinates.lng.toFixed(4)}°)`);
-      showToast('📍 GPS Locked', `Hospital Coordinates: ${gps.coordinates.lat.toFixed(4)}°, ${gps.coordinates.lng.toFixed(4)}°`, 'VERIFICATION');
+      if (gps.coordinates) {
+        setHospCoords(gps.coordinates);
+        if (gps.city) setHospCity(gps.city);
+        if (!hospLocation) setHospLocation(gps.city || 'Local Area');
+        if (!hospAddress) setHospAddress(`Facility Location (${gps.coordinates.lat.toFixed(4)}°, ${gps.coordinates.lng.toFixed(4)}°)`);
+        showToast('📍 GPS Locked', `Hospital Coordinates: ${gps.coordinates.lat.toFixed(4)}°, ${gps.coordinates.lng.toFixed(4)}°`, 'VERIFICATION');
+      } else {
+        showToast('GPS Error', gps.error || 'Could not acquire device GPS. Please enter address manually.', 'INFO');
+      }
     } catch {
       showToast('GPS Error', 'Could not acquire device GPS. Please enter address manually.', 'INFO');
     } finally {
