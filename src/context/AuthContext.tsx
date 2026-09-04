@@ -306,23 +306,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: regResult.error || 'Failed to create patient profile in database.' };
     }
 
-    // Auto-authorize default hospital for seamless out-of-the-box verification
-    const defaultTrust = {
-      id: `trust-${Date.now()}`,
-      patientId: generatedPatientId,
-      patientProfileId: newProfile.id,
-      hospitalId: 'HOSP-2026-00101',
-      hospitalName: 'Apex Super Speciality Hospital & Trauma Center',
-      hospitalAddress: 'Sector 14, Vashi, Navi Mumbai, Maharashtra 400703',
-      hospitalCity: 'Navi Mumbai',
-      grantedAt: new Date().toISOString(),
-      status: 'ACTIVE' as const,
-      allowEmergencyAlert: true,
-      allowMedicalHistory: true,
-      ambulanceAvailable: true
-    };
-    db.saveTrustedHospital(defaultTrust);
-
     // Set authenticated session
     setCurrentUser(newUser);
     setPatientProfile(newProfile);
@@ -504,6 +487,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const newProfile = { ...patientProfile, ...updated };
       setPatientProfile(newProfile);
       db.createPatientProfile(newProfile);
+
+      // Persist updates to central cloud database
+      const activeUser: User = currentUser || {
+        id: newProfile.userId || `usr-${newProfile.patientId}`,
+        email: newProfile.email || '',
+        phone: newProfile.phone || '',
+        fullName: newProfile.fullName || 'Registered Patient',
+        role: 'PATIENT',
+        createdAt: newProfile.createdAt || new Date().toISOString()
+      };
+      cloudDataService.registerPatient(newProfile, activeUser);
     }
   };
 

@@ -100,9 +100,10 @@ export const DoctorDashboard: React.FC = () => {
     const patientDocs = db.getDocuments(patient.patientId);
     const patientTimeline = db.getTimeline(patient.patientId);
 
-    // Check ABDM Consent / Trusted Hospital Authorization
-    const doctorHospitalId = doctorProfile?.hospitalId || 'HOSP-2026-00101';
-    const isAuthorized = db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
+    // Check ABDM Consent / Trusted Hospital Authorization from live Cloud and DB
+    const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || 'HOSP-2026-00101';
+    const authCheck = await cloudDataService.checkHospitalAccess(doctorHospitalId, patient.patientId);
+    const isAuthorized = authCheck.isAuthorized || db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
 
     setSearchResult({
       found: true,
@@ -118,11 +119,19 @@ export const DoctorDashboard: React.FC = () => {
       setSelectedSession(latestSession);
     }
 
-    showToast(
-      'Patient Record Found',
-      `Loaded clinical record for ${patient.patientId} (${patientDocs.length} documents, ${patientTimeline.length} timeline events).`,
-      'INFO'
-    );
+    if (isAuthorized) {
+      showToast(
+        'Patient Records Authorized',
+        `Retrieved complete clinical history for ${patient.fullName || patient.patientId}.`,
+        'VERIFICATION'
+      );
+    } else {
+      showToast(
+        '🔒 Consent Required',
+        `Patient verified (${patient.patientId}). Click "Request Patient Consent" to request record access.`,
+        'INFO'
+      );
+    }
   };
 
   const [requestPending, setRequestPending] = useState(false);
