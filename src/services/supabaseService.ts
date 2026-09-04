@@ -853,14 +853,22 @@ class CloudDataService {
     // 1. Update cloud database
     await cloudDb.saveAccessRequest(target);
 
-    // 2. Update local state
-    const all = this.getAccessRequests();
-    const localTarget = all.find(r => r.id === requestId);
-    if (localTarget) {
-      localTarget.status = status;
-      localTarget.respondedAt = target.respondedAt;
-      this.setAccessRequests(all);
+    // 2. Redundant Serverless write
+    if (typeof window !== 'undefined' && window.location) {
+      try {
+        await fetch('/api/access-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(target)
+        });
+      } catch {}
     }
+
+    // 3. Update local state
+    const all = this.getAccessRequests();
+    const filtered = all.filter(r => r.id !== requestId);
+    filtered.unshift(target);
+    this.setAccessRequests(filtered);
 
     // If APPROVED, also link to TrustedHospitals in cloud database and local db
     if (status === 'APPROVED') {

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { useNotification } from '../../context/NotificationContext';
 import { AIIntakeChat } from '../../components/patient/AIIntakeChat';
 import { DocumentUploader } from '../../components/patient/DocumentUploader';
 import { MedicalTimeline } from '../../components/patient/MedicalTimeline';
@@ -25,29 +26,35 @@ interface PatientDashboardProps {
 
 export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab = 'intake' }) => {
   const { currentUser, patientProfile } = useAuth();
+  const { showToast } = useNotification();
   const { language, t, isRTL } = useLanguage();
   const [activeTab, setActiveTab] = useState<string>(initialTab === 'emergency' ? 'intake' : initialTab);
   const [activeEmergencyId, setActiveEmergencyId] = useState<string | undefined>(undefined);
   const [activeEmergencyAlert, setActiveEmergencyAlert] = useState<any>(null);
   const [showEmergencyDetails, setShowEmergencyDetails] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([]);
+  const [processedRequestIds, setProcessedRequestIds] = useState<Set<string>>(new Set());
 
   const loadPendingRequests = async () => {
     const pId = patientProfile?.patientId || patientProfile?.id;
     if (pId) {
       const reqs = await cloudDataService.getPendingRequestsForPatient(pId);
-      setPendingRequests(reqs);
+      setPendingRequests(reqs.filter(r => !processedRequestIds.has(r.id) && r.status === 'PENDING'));
     }
   };
 
   const handleApproveRequest = async (requestId: string) => {
+    setProcessedRequestIds(prev => new Set(prev).add(requestId));
+    setPendingRequests(prev => prev.filter(r => r.id !== requestId));
+    showToast('✓ Access Approved', 'Hospital has been granted permission to access your medical records.', 'VERIFICATION');
     await cloudDataService.respondToAccessRequest(requestId, 'APPROVED');
-    await loadPendingRequests();
   };
 
   const handleDenyRequest = async (requestId: string) => {
+    setProcessedRequestIds(prev => new Set(prev).add(requestId));
+    setPendingRequests(prev => prev.filter(r => r.id !== requestId));
+    showToast('✕ Access Denied', 'Hospital access request has been denied.', 'INFO');
     await cloudDataService.respondToAccessRequest(requestId, 'DENIED');
-    await loadPendingRequests();
   };
 
   const checkEmergencyAlerts = () => {
