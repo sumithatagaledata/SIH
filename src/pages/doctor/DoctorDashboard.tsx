@@ -213,13 +213,13 @@ export const DoctorDashboard: React.FC = () => {
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-xl sm:text-2xl font-black text-slate-900">{currentUser?.fullName || 'Dr. Vikram Deshmukh, MD'}</h2>
+              <h2 className="text-xl sm:text-2xl font-black text-slate-900">{currentUser?.fullName || 'Attending Physician'}</h2>
               <span className="text-xs bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded-full font-mono font-bold">
-                MCI/NMC: {doctorProfile?.registrationNumber || 'MCI-2009-48291'}
+                MCI/NMC: {doctorProfile?.registrationNumber || 'ABDM-Verified'}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Specialization: <span className="text-slate-800 font-semibold">{doctorProfile?.specialization || 'Internal Medicine & Critical Care'}</span> • Hospital: <span className="text-teal-700 font-semibold">Apex Super Speciality Hospital</span>
+              Specialization: <span className="text-slate-800 font-semibold">{doctorProfile?.specialization || 'Clinical & Emergency Medicine'}</span> • Hospital: <span className="text-teal-700 font-semibold">{hospitalAccount?.hospitalName || doctorProfile?.hospitalName || 'Verified Medical Facility'}</span>
             </p>
           </div>
         </div>

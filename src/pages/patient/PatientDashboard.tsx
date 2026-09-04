@@ -337,7 +337,9 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
           </div>
           <div className="bg-slate-50 px-3.5 py-2.5 rounded-xl border border-slate-200 shadow-sm">
             <span className="text-slate-500 block text-[10px] uppercase font-bold">Preferred Hospital</span>
-            <span className="text-slate-800 font-semibold truncate block max-w-[180px]">Apex Super Speciality Hospital</span>
+            <span className="text-slate-800 font-semibold truncate block max-w-[180px]">
+              {db.getTrustedHospitals(patientProfile?.patientId || '').find(t => t.status === 'ACTIVE')?.hospitalName || (patientProfile?.city ? `${patientProfile.city} General Facility` : 'Network Hospital')}
+            </span>
           </div>
         </div>
       </div>

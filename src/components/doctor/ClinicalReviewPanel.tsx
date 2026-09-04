@@ -43,10 +43,8 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
   const handleVerifyRecord = (actionType: 'APPROVE' | 'EDIT_AND_APPROVE' | 'REJECT') => {
     setIsVerifying(true);
 
-    const docName = doctorProfile?.registrationNumber
-      ? `${currentUser?.fullName || 'Attending Physician'}`
-      : 'Dr. Vikram Deshmukh, MD';
-    const regNo = doctorProfile?.registrationNumber || 'MCI-2009-48291';
+    const docName = currentUser?.fullName || doctorProfile?.specialization || 'Attending Physician';
+    const regNo = doctorProfile?.registrationNumber || 'ABDM-Verified';
 
     const updatedSummary: ClinicalHistorySummary = {
       ...summary,
@@ -212,11 +210,11 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 text-teal-600" />
             <span className="font-bold text-slate-900">
-              Signer: {doctorProfile?.registrationNumber ? (currentUser?.fullName || 'Attending Physician') : 'Dr. Vikram Deshmukh, MD'}
+              Signer: {currentUser?.fullName || doctorProfile?.specialization || 'Attending Physician'}
             </span>
           </div>
           <p className="text-[11px] text-slate-500">
-            NMC/MCI Registration: <span className="font-mono text-teal-700 font-bold">{doctorProfile?.registrationNumber || 'MCI-2009-48291'}</span>
+            NMC/MCI Registration: <span className="font-mono text-teal-700 font-bold">{doctorProfile?.registrationNumber || 'ABDM-Verified'}</span>
           </p>
         </div>
 

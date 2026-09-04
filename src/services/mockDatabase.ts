@@ -329,23 +329,44 @@ export class MockDatabase {
   }
 
   private init(): void {
-    // One-time cleanup to clear previously stored dummy records from localStorage
-    const CLEANUP_KEY = 'medibridge_admin_clear_all_registered_records_v4';
+    // Universal cleanup to purge any previously stored mock sessions, dummy documents, and fake patients
+    const CLEANUP_KEY = 'medibridge_admin_purge_all_mock_data_v6';
     if (!getStorageItem(CLEANUP_KEY)) {
-      // Purge fake mock patient entries from old test runs
-      const FAKE_PATIENT_IDS = ['MB-2026-7F42K9', 'MB-2026-38491A', 'MB-2026-99210B', 'MB-2026-44109C'];
+      const FAKE_PATIENT_IDS = ['MB-2026-7F42K9', 'MB-2026-38491A', 'MB-2026-99210B', 'MB-2026-44109C', 'MB-2026-TEST99'];
       try {
         const rawPat = getStorageItem(STORAGE_KEYS.PATIENTS);
         if (rawPat) {
           const list: any[] = JSON.parse(rawPat);
-          const cleaned = list.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
+          const cleaned = list.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId) && p.fullName !== 'Test Patient');
           setStorageItem(STORAGE_KEYS.PATIENTS, JSON.stringify(cleaned));
         }
         const rawCloud = getStorageItem('medibridge_cloud_patients_cache');
         if (rawCloud) {
           const cList: any[] = JSON.parse(rawCloud);
-          const cCleaned = cList.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
+          const cCleaned = cList.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId) && p.fullName !== 'Test Patient');
           setStorageItem('medibridge_cloud_patients_cache', JSON.stringify(cCleaned));
+        }
+
+        // Purge dummy sessions, documents, and timelines from older dev versions
+        const rawSessions = getStorageItem(STORAGE_KEYS.SESSIONS);
+        if (rawSessions) {
+          const sList: any[] = JSON.parse(rawSessions);
+          const sCleaned = sList.filter(s => s.patientId && !FAKE_PATIENT_IDS.includes(s.patientId));
+          setStorageItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sCleaned));
+        }
+
+        const rawDocs = getStorageItem(STORAGE_KEYS.DOCUMENTS);
+        if (rawDocs) {
+          const dList: any[] = JSON.parse(rawDocs);
+          const dCleaned = dList.filter(d => d.patientId && !FAKE_PATIENT_IDS.includes(d.patientId));
+          setStorageItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(dCleaned));
+        }
+
+        const rawTimeline = getStorageItem(STORAGE_KEYS.TIMELINE);
+        if (rawTimeline) {
+          const tList: any[] = JSON.parse(rawTimeline);
+          const tCleaned = tList.filter(t => t.patientId && !FAKE_PATIENT_IDS.includes(t.patientId));
+          setStorageItem(STORAGE_KEYS.TIMELINE, JSON.stringify(tCleaned));
         }
       } catch {}
       setStorageItem(CLEANUP_KEY, 'true');
