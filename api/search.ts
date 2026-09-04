@@ -1,6 +1,5 @@
 // Vercel Serverless Function: /api/search
-const CLOUD_ENDPOINT = 'https://api.restful-api.dev/objects';
-const PATIENTS_OBJECT_ID = 'ff808181a067127101a0671ee52f0026';
+const CLOUD_SYNC_ENDPOINT = 'https://ntfy.sh/medibridge_cloud_db_v4/json?poll=1&since=24h';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -26,10 +25,22 @@ export default async function handler(req: any, res: any) {
     const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
 
     try {
-      const response = await fetch(`${CLOUD_ENDPOINT}/${PATIENTS_OBJECT_ID}`);
+      const response = await fetch(CLOUD_SYNC_ENDPOINT, { cache: 'no-store' });
       if (response.ok) {
-        const json = await response.json();
-        const items = Array.isArray(json?.data?.items) ? json.data.items : [];
+        const text = await response.text();
+        const items: any[] = [];
+        text.trim().split('\n').forEach(l => {
+          try {
+            const raw = JSON.parse(l);
+            if (raw.message) {
+              const parsed = JSON.parse(raw.message);
+              if (parsed.type === 'SAVE_PATIENT' && (parsed.patient || parsed.data)) {
+                items.unshift(parsed.patient || parsed.data);
+              }
+            }
+          } catch {}
+        });
+
         const match = items.find((p: any) => {
           const pId = (p.patientId || '').trim().toUpperCase();
           const pIdAlpha = pId.replace(/[^A-Z0-9]/g, '');

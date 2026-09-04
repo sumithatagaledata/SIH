@@ -83,13 +83,8 @@ export interface CloudTrustedHospitalRecord {
   ambulanceAvailable?: boolean;
 }
 
-const CLOUD_CONFIG = {
-  ENDPOINT: 'https://api.restful-api.dev/objects',
-  PATIENTS_OBJECT_ID: 'ff808181a067127101a0671ee52f0026',
-  HOSPITALS_OBJECT_ID: 'ff808181a067127101a0671ee5e70027',
-  ACCESS_REQUESTS_OBJECT_ID: 'ff808181a067127101a0671ee66d0028',
-  TRUSTED_HOSPITALS_OBJECT_ID: 'ff808181a067127101a0671ee6fc0029',
-};
+const GLOBAL_CLOUD_DB_TOPIC = 'medibridge_cloud_db_v4';
+const CLOUD_SYNC_ENDPOINT = `https://ntfy.sh/${GLOBAL_CLOUD_DB_TOPIC}`;
 
 const LOCAL_PERSIST_KEYS = {
   PATIENTS: 'medibridge_cloud_patients_cache',
@@ -127,6 +122,7 @@ class CloudDatabaseEngine {
   private hospitalsCache: CloudHospitalRecord[] = [];
   private accessRequestsCache: CloudAccessRequestRecord[] = [];
   private trustedHospitalsCache: CloudTrustedHospitalRecord[] = [];
+  private sseClient: EventSource | null = null;
   private isInitialized = false;
 
   private constructor() {
@@ -135,7 +131,7 @@ class CloudDatabaseEngine {
     this.hospitalsCache = getPersistedCache<CloudHospitalRecord>(LOCAL_PERSIST_KEYS.HOSPITALS);
     this.accessRequestsCache = getPersistedCache<CloudAccessRequestRecord>(LOCAL_PERSIST_KEYS.REQUESTS);
     this.trustedHospitalsCache = getPersistedCache<CloudTrustedHospitalRecord>(LOCAL_PERSIST_KEYS.TRUSTED);
-    this.startBackgroundSync();
+    this.startLiveCrossDeviceSync();
   }
 
   public static getInstance(): CloudDatabaseEngine {
@@ -145,93 +141,124 @@ class CloudDatabaseEngine {
     return CloudDatabaseEngine.instance;
   }
 
-  private async fetchCloudCollection<T>(objectId: string): Promise<T[]> {
+  private async postCloudEvent(type: string, data: any): Promise<boolean> {
     try {
-      const response = await fetch(`${CLOUD_CONFIG.ENDPOINT}/${objectId}`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        cache: 'no-store'
+      const res = await fetch(CLOUD_SYNC_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Title': type,
+          'Priority': 'urgent'
+        },
+        body: JSON.stringify({ type, data, ts: Date.now() })
       });
-      if (response.ok) {
-        const result = await response.json();
-        return Array.isArray(result?.data?.items) ? result.data.items : [];
-      }
+      return res.ok;
     } catch (err) {
-      console.warn(`[CloudDB Fetch Error for ${objectId}]:`, err);
+      console.warn('[CloudDB Event Publish Error]:', err);
+      return false;
     }
-    return [];
   }
 
-  private async updateCloudCollection<T>(objectId: string, collectionName: string, items: T[]): Promise<boolean> {
-    try {
-      const response = await fetch(`${CLOUD_CONFIG.ENDPOINT}/${objectId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          name: collectionName,
-          data: { items }
-        })
+  private handleIncomingCloudEvent(eventData: any) {
+    if (!eventData || !eventData.type) return;
+    const { type, data, patient, hospital, req, trusted } = eventData;
+    const payload = data || patient || hospital || req || trusted;
+    if (!payload) return;
+
+    let updated = false;
+
+    if (type === 'SAVE_PATIENT' && payload.patientId && !FAKE_PATIENT_IDS.includes(payload.patientId)) {
+      const cleanId = payload.patientId.trim().toUpperCase();
+      const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
+      const filtered = this.patientsCache.filter(p => {
+        const pId = (p.patientId || '').trim().toUpperCase();
+        const pAlpha = pId.replace(/[^A-Z0-9]/g, '');
+        return pId !== cleanId && pAlpha !== cleanAlpha && p.id !== payload.id;
       });
-      return response.ok;
-    } catch (err) {
-      console.warn(`[CloudDB Update Error for ${collectionName}]:`, err);
-      return false;
+      filtered.unshift({ ...payload, patientId: cleanId });
+      this.patientsCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, filtered);
+      updated = true;
+    } else if (type === 'SAVE_HOSPITAL' && (payload.hospitalId || payload.id)) {
+      const hospId = (payload.hospitalId || payload.id).trim().toUpperCase();
+      const filtered = this.hospitalsCache.filter(h => {
+        const hId = (h.hospitalId || h.id || '').trim().toUpperCase();
+        return hId !== hospId;
+      });
+      filtered.unshift({ ...payload, hospitalId: hospId });
+      this.hospitalsCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.HOSPITALS, filtered);
+      updated = true;
+    } else if (type === 'SAVE_ACCESS_REQUEST' && payload.id) {
+      const filtered = this.accessRequestsCache.filter(r => r.id !== payload.id);
+      filtered.unshift(payload);
+      this.accessRequestsCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.REQUESTS, filtered);
+      updated = true;
+    } else if (type === 'SAVE_TRUSTED_HOSPITAL' && payload.id) {
+      const filtered = this.trustedHospitalsCache.filter(t => !(t.id === payload.id || (t.patientId === payload.patientId && t.hospitalId === payload.hospitalId)));
+      filtered.unshift(payload);
+      this.trustedHospitalsCache = filtered;
+      setPersistedCache(LOCAL_PERSIST_KEYS.TRUSTED, filtered);
+      updated = true;
+    }
+
+    if (updated && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type } }));
     }
   }
 
   public async syncAll(): Promise<void> {
     try {
-      const [cloudPatients, cloudHospitals, cloudRequests, cloudTrusted] = await Promise.all([
-        this.fetchCloudCollection<CloudPatientRecord>(CLOUD_CONFIG.PATIENTS_OBJECT_ID),
-        this.fetchCloudCollection<CloudHospitalRecord>(CLOUD_CONFIG.HOSPITALS_OBJECT_ID),
-        this.fetchCloudCollection<CloudAccessRequestRecord>(CLOUD_CONFIG.ACCESS_REQUESTS_OBJECT_ID),
-        this.fetchCloudCollection<CloudTrustedHospitalRecord>(CLOUD_CONFIG.TRUSTED_HOSPITALS_OBJECT_ID)
-      ]);
-
-      if (cloudPatients.length > 0) {
-        // Merge cloud with existing cache, excluding fake IDs
-        const filteredCloud = cloudPatients.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
-        const mergedPatients = [...filteredCloud];
-        this.patientsCache.forEach(cached => {
-          if (FAKE_PATIENT_IDS.includes(cached.patientId)) return;
-          const exists = mergedPatients.some(p => p.patientId?.trim().toUpperCase() === cached.patientId?.trim().toUpperCase() || p.id === cached.id);
-          if (!exists) mergedPatients.push(cached);
+      const response = await fetch(`${CLOUD_SYNC_ENDPOINT}/json?poll=1&since=24h`, {
+        cache: 'no-store'
+      });
+      if (response.ok) {
+        const text = await response.text();
+        const lines = text.trim().split('\n');
+        lines.forEach(l => {
+          try {
+            const raw = JSON.parse(l);
+            if (raw.message) {
+              const eventData = JSON.parse(raw.message);
+              this.handleIncomingCloudEvent(eventData);
+            }
+          } catch {}
         });
-        this.patientsCache = mergedPatients;
-        setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, mergedPatients);
       }
-
-      if (cloudHospitals.length > 0) {
-        this.hospitalsCache = cloudHospitals;
-        setPersistedCache(LOCAL_PERSIST_KEYS.HOSPITALS, cloudHospitals);
-      }
-      if (cloudRequests.length > 0) {
-        this.accessRequestsCache = cloudRequests;
-        setPersistedCache(LOCAL_PERSIST_KEYS.REQUESTS, cloudRequests);
-      }
-      if (cloudTrusted.length > 0) {
-        this.trustedHospitalsCache = cloudTrusted;
-        setPersistedCache(LOCAL_PERSIST_KEYS.TRUSTED, cloudTrusted);
-      }
-
       this.isInitialized = true;
     } catch (err) {
       console.warn('[CloudDB syncAll error]:', err);
     }
   }
 
-  private startBackgroundSync() {
-    // Initial fetch
+  private startLiveCrossDeviceSync() {
+    // 1. Initial snapshot fetch
     this.syncAll();
 
-    // Periodic polling every 3 seconds for fresh live cross-device data
-    if (typeof window !== 'undefined') {
+    // 2. Real-Time Server-Sent Events (SSE) stream for instant cross-device updates
+    if (typeof window !== 'undefined' && typeof window.EventSource !== 'undefined') {
+      try {
+        this.sseClient = new EventSource(`${CLOUD_SYNC_ENDPOINT}/sse`);
+        this.sseClient.onmessage = (event) => {
+          try {
+            const raw = JSON.parse(event.data);
+            if (raw.message) {
+              const eventData = JSON.parse(raw.message);
+              this.handleIncomingCloudEvent(eventData);
+            }
+          } catch {}
+        };
+        this.sseClient.onerror = () => {
+          // Reconnection is handled automatically by EventSource
+        };
+      } catch (sseErr) {
+        console.warn('[CloudDB SSE Setup Error]:', sseErr);
+      }
+
+      // 3. Fallback polling every 4 seconds
       setInterval(() => {
         this.syncAll();
-      }, 3000);
+      }, 4000);
     }
   }
 
@@ -239,27 +266,15 @@ class CloudDatabaseEngine {
   // PATIENT CRUD (Global Patient Identity)
   // ==========================================
   public async getPatients(): Promise<CloudPatientRecord[]> {
-    const cloud = await this.fetchCloudCollection<CloudPatientRecord>(CLOUD_CONFIG.PATIENTS_OBJECT_ID);
-    if (cloud.length > 0) {
-      const filteredCloud = cloud.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
-      const merged = [...filteredCloud];
-      this.patientsCache.forEach(cached => {
-        if (FAKE_PATIENT_IDS.includes(cached.patientId)) return;
-        const exists = merged.some(p => p.patientId?.trim().toUpperCase() === cached.patientId?.trim().toUpperCase() || p.id === cached.id);
-        if (!exists) merged.push(cached);
-      });
-      this.patientsCache = merged;
-      setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, merged);
-      return merged;
-    }
+    await this.syncAll();
     return this.patientsCache.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
   }
 
   public async savePatient(patient: CloudPatientRecord): Promise<boolean> {
-    const existing = await this.getPatients();
     const cleanId = patient.patientId.trim().toUpperCase();
     const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
 
+    const existing = this.patientsCache;
     const filtered = existing.filter(p => {
       const pId = (p.patientId || '').trim().toUpperCase();
       const pAlpha = pId.replace(/[^A-Z0-9]/g, '');
@@ -274,15 +289,11 @@ class CloudDatabaseEngine {
     };
 
     filtered.unshift(newRecord);
-
     this.patientsCache = filtered;
     setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, filtered);
 
-    const success = await this.updateCloudCollection(
-      CLOUD_CONFIG.PATIENTS_OBJECT_ID,
-      'medibridge_patients_v1',
-      filtered
-    );
+    // Publish to central cloud database across all devices
+    const success = await this.postCloudEvent('SAVE_PATIENT', newRecord);
     return success;
   }
 
@@ -292,7 +303,6 @@ class CloudDatabaseEngine {
     const cleanAlpha = cleanId.replace(/[^A-Z0-9]/g, '');
     if (!cleanAlpha) return undefined;
 
-    // 1. Check current memory & local persistent cache
     const matchInList = (list: CloudPatientRecord[]) => {
       return list.find(p => {
         const pId = (p.patientId || '').trim().toUpperCase();
@@ -318,6 +328,7 @@ class CloudDatabaseEngine {
       });
     };
 
+    // 1. Check in-memory cache
     let found = matchInList(this.patientsCache);
     if (found) return found;
 
@@ -326,7 +337,7 @@ class CloudDatabaseEngine {
     found = matchInList(all);
     if (found) return found;
 
-    // 3. Fallback: try serverless /api/search endpoint if available
+    // 3. Fallback: try serverless /api/search endpoint
     try {
       if (typeof window !== 'undefined' && window.location) {
         const res = await fetch(`/api/search?patientId=${encodeURIComponent(cleanId)}`);
@@ -391,38 +402,31 @@ class CloudDatabaseEngine {
   // HOSPITAL CRUD
   // ==========================================
   public async getHospitals(): Promise<CloudHospitalRecord[]> {
-    const cloud = await this.fetchCloudCollection<CloudHospitalRecord>(CLOUD_CONFIG.HOSPITALS_OBJECT_ID);
-    if (cloud.length > 0) {
-      this.hospitalsCache = cloud;
-      return cloud;
-    }
+    await this.syncAll();
     return this.hospitalsCache;
   }
 
   public async saveHospital(hospital: CloudHospitalRecord): Promise<boolean> {
-    const existing = await this.getHospitals();
     const hospId = (hospital.hospitalId || hospital.id).trim().toUpperCase();
-
+    const existing = this.hospitalsCache;
     const filtered = existing.filter(h => {
       const hId = (h.hospitalId || h.id || '').trim().toUpperCase();
       return hId !== hospId;
     });
 
-    filtered.unshift({
+    const newRecord: CloudHospitalRecord = {
       ...hospital,
       hospitalId: hospId,
       id: hospId,
       status: 'VERIFIED',
       createdAt: hospital.createdAt || new Date().toISOString()
-    });
+    };
 
+    filtered.unshift(newRecord);
     this.hospitalsCache = filtered;
-    const success = await this.updateCloudCollection(
-      CLOUD_CONFIG.HOSPITALS_OBJECT_ID,
-      'medibridge_hospitals_v1',
-      filtered
-    );
-    return success;
+    setPersistedCache(LOCAL_PERSIST_KEYS.HOSPITALS, filtered);
+
+    return await this.postCloudEvent('SAVE_HOSPITAL', newRecord);
   }
 
   public async findHospitalById(hospitalId: string): Promise<CloudHospitalRecord | undefined> {
@@ -441,34 +445,24 @@ class CloudDatabaseEngine {
   // ACCESS REQUESTS (Cross-Device Permissions)
   // ==========================================
   public async getAccessRequests(): Promise<CloudAccessRequestRecord[]> {
-    const cloud = await this.fetchCloudCollection<CloudAccessRequestRecord>(CLOUD_CONFIG.ACCESS_REQUESTS_OBJECT_ID);
-    if (cloud.length > 0) {
-      this.accessRequestsCache = cloud;
-      return cloud;
-    }
+    await this.syncAll();
     return this.accessRequestsCache;
   }
 
   public async saveAccessRequest(req: CloudAccessRequestRecord): Promise<boolean> {
-    const all = await this.getAccessRequests();
-    const filtered = all.filter(r => r.id !== req.id);
+    const filtered = this.accessRequestsCache.filter(r => r.id !== req.id);
     filtered.unshift(req);
     this.accessRequestsCache = filtered;
-    return await this.updateCloudCollection(
-      CLOUD_CONFIG.ACCESS_REQUESTS_OBJECT_ID,
-      'medibridge_access_requests_v1',
-      filtered
-    );
+    setPersistedCache(LOCAL_PERSIST_KEYS.REQUESTS, filtered);
+
+    return await this.postCloudEvent('SAVE_ACCESS_REQUEST', req);
   }
 
   // ==========================================
   // TRUSTED HOSPITALS (Persistent Consent)
   // ==========================================
   public async getTrustedHospitals(patientId?: string): Promise<CloudTrustedHospitalRecord[]> {
-    const cloud = await this.fetchCloudCollection<CloudTrustedHospitalRecord>(CLOUD_CONFIG.TRUSTED_HOSPITALS_OBJECT_ID);
-    if (cloud.length > 0) {
-      this.trustedHospitalsCache = cloud;
-    }
+    await this.syncAll();
     if (!patientId) return this.trustedHospitalsCache;
     const clean = patientId.trim().toUpperCase();
     const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
@@ -482,15 +476,12 @@ class CloudDatabaseEngine {
   }
 
   public async saveTrustedHospital(record: CloudTrustedHospitalRecord): Promise<boolean> {
-    const all = await this.getTrustedHospitals();
-    const filtered = all.filter(t => !(t.id === record.id || (t.patientId === record.patientId && t.hospitalId === record.hospitalId)));
+    const filtered = this.trustedHospitalsCache.filter(t => !(t.id === record.id || (t.patientId === record.patientId && t.hospitalId === record.hospitalId)));
     filtered.unshift(record);
     this.trustedHospitalsCache = filtered;
-    return await this.updateCloudCollection(
-      CLOUD_CONFIG.TRUSTED_HOSPITALS_OBJECT_ID,
-      'medibridge_trusted_hospitals_v1',
-      filtered
-    );
+    setPersistedCache(LOCAL_PERSIST_KEYS.TRUSTED, filtered);
+
+    return await this.postCloudEvent('SAVE_TRUSTED_HOSPITAL', record);
   }
 
   public async isHospitalAuthorized(hospitalIdentifier: string, patientIdentifier: string): Promise<boolean> {

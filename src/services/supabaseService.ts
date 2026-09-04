@@ -38,11 +38,13 @@ export const supabase: SupabaseClient | null = isSupabaseConfigured
     })
   : null;
 
-// Cloud Sync Relay (P2P / Serverless Cross-Device Sync Channel)
+// Cloud Sync Relay (P2P / Global Cross-Device Sync Channel)
+const GLOBAL_SYNC_RELAY_ENDPOINT = 'https://ntfy.sh/medibridge_sync_relay_v4';
+
 class CrossDeviceSyncRelay {
   private listeners: Map<string, Set<(data: any) => void>> = new Map();
   private broadcastChannel: BroadcastChannel | null = null;
-  private pollIntervals: Map<string, number> = new Map();
+  private sseClient: EventSource | null = null;
 
   constructor() {
     try {
@@ -55,9 +57,7 @@ class CrossDeviceSyncRelay {
           }
         };
       }
-    } catch {
-      // BroadcastChannel fallback
-    }
+    } catch {}
 
     // Storage Event Listener for Cross-Tab / Cross-Window Sync
     if (typeof window !== 'undefined') {
@@ -70,6 +70,24 @@ class CrossDeviceSyncRelay {
           } catch {}
         }
       });
+
+      // Global Server-Sent Events (SSE) stream for instant physical cross-device events
+      if (typeof window.EventSource !== 'undefined') {
+        try {
+          this.sseClient = new EventSource(`${GLOBAL_SYNC_RELAY_ENDPOINT}/sse`);
+          this.sseClient.onmessage = (event) => {
+            try {
+              const raw = JSON.parse(event.data);
+              if (raw.message) {
+                const { channel, payload } = JSON.parse(raw.message);
+                if (channel && payload) {
+                  this.notify(channel, payload);
+                }
+              }
+            } catch {}
+          };
+        } catch {}
+      }
     }
   }
 
@@ -89,7 +107,19 @@ class CrossDeviceSyncRelay {
       }
     } catch {}
 
-    // 4. Supabase Realtime Broadcast if connected
+    // 4. Global Cloud Pub/Sub across physical devices
+    try {
+      fetch(GLOBAL_SYNC_RELAY_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Title': channel,
+          'Priority': 'urgent'
+        },
+        body: JSON.stringify({ channel, payload, ts: Date.now() })
+      }).catch(() => {});
+    } catch {}
+
+    // 5. Supabase Realtime Broadcast if connected
     if (supabase) {
       try {
         supabase.channel(channel).send({
