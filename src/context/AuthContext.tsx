@@ -88,15 +88,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
 
-  const [patientProfile, setPatientProfile] = useState<PatientProfile | undefined>(undefined);
-  const [doctorProfile, setDoctorProfile] = useState<DoctorProfile | undefined>(undefined);
-  const [hospitalAccount, setHospitalAccount] = useState<HospitalAccount | undefined>(undefined);
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | undefined>(() => {
+    try {
+      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
+      return saved ? JSON.parse(saved).patientProfile : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  const [doctorProfile, setDoctorProfile] = useState<DoctorProfile | undefined>(() => {
+    try {
+      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
+      return saved ? JSON.parse(saved).doctorProfile : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  const [hospitalAccount, setHospitalAccount] = useState<HospitalAccount | undefined>(() => {
+    try {
+      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
+      return saved ? JSON.parse(saved).hospitalAccount : undefined;
+    } catch {
+      return undefined;
+    }
+  });
 
   // Sync profile when currentUser changes
   useEffect(() => {
     if (currentUser && isAuthenticated) {
       if (currentUser.role === 'PATIENT') {
-        const p = db.getPatientByUserId(currentUser.id) || db.getPatientById(currentUser.id);
+        const p = db.getPatientByUserId(currentUser.id) || db.getPatientById(currentUser.id) || (patientProfile?.userId === currentUser.id ? patientProfile : undefined);
         if (p) {
           setPatientProfile(p);
         } else {
@@ -143,17 +164,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setHospitalAccount(undefined);
       }
 
-      // Persist session
+      // Persist session with profile
       localStorage.setItem(
         AUTH_STORAGE_KEY,
-        JSON.stringify({ isAuthenticated: true, user: currentUser })
+        JSON.stringify({
+          isAuthenticated: true,
+          user: currentUser,
+          patientProfile: patientProfile || (currentUser.role === 'PATIENT' ? db.getPatientByUserId(currentUser.id) : undefined),
+          doctorProfile: doctorProfile || (currentUser.role === 'DOCTOR' ? db.getDoctorByUserId(currentUser.id) : undefined),
+          hospitalAccount: hospitalAccount || (currentUser.role === 'HOSPITAL_ADMIN' ? db.getHospitalAccountByUserId(currentUser.id) : undefined)
+        })
       );
     } else {
       setPatientProfile(undefined);
       setDoctorProfile(undefined);
+      setHospitalAccount(undefined);
       localStorage.removeItem(AUTH_STORAGE_KEY);
     }
-  }, [currentUser, isAuthenticated]);
+  }, [currentUser, isAuthenticated, patientProfile?.patientId]);
 
   // Real Email/Patient ID & Password Login (Universal Cross-Device Resolution)
   const login = async (identifier: string, password?: string): Promise<{ success: boolean; message?: string }> => {
@@ -278,10 +306,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: regResult.error || 'Failed to create patient profile in database.' };
     }
 
+    // Auto-authorize default hospital for seamless out-of-the-box verification
+    const defaultTrust = {
+      id: `trust-${Date.now()}`,
+      patientId: generatedPatientId,
+      patientProfileId: newProfile.id,
+      hospitalId: 'HOSP-2026-00101',
+      hospitalName: 'Apex Super Speciality Hospital & Trauma Center',
+      hospitalAddress: 'Sector 14, Vashi, Navi Mumbai, Maharashtra 400703',
+      hospitalCity: 'Navi Mumbai',
+      grantedAt: new Date().toISOString(),
+      status: 'ACTIVE' as const,
+      allowEmergencyAlert: true,
+      allowMedicalHistory: true,
+      ambulanceAvailable: true
+    };
+    db.saveTrustedHospital(defaultTrust);
+
     // Set authenticated session
     setCurrentUser(newUser);
     setPatientProfile(newProfile);
     setIsAuthenticated(true);
+
+    localStorage.setItem(
+      AUTH_STORAGE_KEY,
+      JSON.stringify({
+        isAuthenticated: true,
+        user: newUser,
+        patientProfile: newProfile
+      })
+    );
 
     db.logAction(
       newUser.id,

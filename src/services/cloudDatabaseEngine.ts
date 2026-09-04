@@ -119,6 +119,8 @@ function setPersistedCache<T>(key: string, items: T[]): void {
   } catch {}
 }
 
+const FAKE_PATIENT_IDS = ['MB-2026-7F42K9', 'MB-2026-38491A', 'MB-2026-99210B', 'MB-2026-44109C'];
+
 class CloudDatabaseEngine {
   private static instance: CloudDatabaseEngine;
   private patientsCache: CloudPatientRecord[] = [];
@@ -128,7 +130,8 @@ class CloudDatabaseEngine {
   private isInitialized = false;
 
   private constructor() {
-    this.patientsCache = getPersistedCache<CloudPatientRecord>(LOCAL_PERSIST_KEYS.PATIENTS);
+    const rawPatients = getPersistedCache<CloudPatientRecord>(LOCAL_PERSIST_KEYS.PATIENTS);
+    this.patientsCache = rawPatients.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
     this.hospitalsCache = getPersistedCache<CloudHospitalRecord>(LOCAL_PERSIST_KEYS.HOSPITALS);
     this.accessRequestsCache = getPersistedCache<CloudAccessRequestRecord>(LOCAL_PERSIST_KEYS.REQUESTS);
     this.trustedHospitalsCache = getPersistedCache<CloudTrustedHospitalRecord>(LOCAL_PERSIST_KEYS.TRUSTED);
@@ -189,9 +192,11 @@ class CloudDatabaseEngine {
       ]);
 
       if (cloudPatients.length > 0) {
-        // Merge cloud with existing cache to ensure no locally registered patient is lost
-        const mergedPatients = [...cloudPatients];
+        // Merge cloud with existing cache, excluding fake IDs
+        const filteredCloud = cloudPatients.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
+        const mergedPatients = [...filteredCloud];
         this.patientsCache.forEach(cached => {
+          if (FAKE_PATIENT_IDS.includes(cached.patientId)) return;
           const exists = mergedPatients.some(p => p.patientId?.trim().toUpperCase() === cached.patientId?.trim().toUpperCase() || p.id === cached.id);
           if (!exists) mergedPatients.push(cached);
         });
@@ -236,8 +241,10 @@ class CloudDatabaseEngine {
   public async getPatients(): Promise<CloudPatientRecord[]> {
     const cloud = await this.fetchCloudCollection<CloudPatientRecord>(CLOUD_CONFIG.PATIENTS_OBJECT_ID);
     if (cloud.length > 0) {
-      const merged = [...cloud];
+      const filteredCloud = cloud.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
+      const merged = [...filteredCloud];
       this.patientsCache.forEach(cached => {
+        if (FAKE_PATIENT_IDS.includes(cached.patientId)) return;
         const exists = merged.some(p => p.patientId?.trim().toUpperCase() === cached.patientId?.trim().toUpperCase() || p.id === cached.id);
         if (!exists) merged.push(cached);
       });
@@ -245,7 +252,7 @@ class CloudDatabaseEngine {
       setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, merged);
       return merged;
     }
-    return this.patientsCache;
+    return this.patientsCache.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
   }
 
   public async savePatient(patient: CloudPatientRecord): Promise<boolean> {

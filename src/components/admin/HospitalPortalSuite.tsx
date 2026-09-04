@@ -320,14 +320,23 @@ export const HospitalPortalSuite: React.FC = () => {
   };
 
   // ==========================================
-  // 4. DIAGNOSTICS & LAB QUEUE STATE
+  // 4. DIAGNOSTICS & LAB QUEUE STATE (Dynamic from real database)
   // ==========================================
-  const [labOrders, setLabOrders] = useState<DiagnosticOrder[]>([
-    { id: 'lab-901', patientId: 'MB-2026-7F42K9', patientName: 'Priya Sharma', testName: 'Cardiac Troponin I & 12-Lead ECG', department: 'CARDIOLOGY', orderedBy: 'Dr. Anand Deshmukh', orderedAt: '10 mins ago', urgency: 'STAT', status: 'IN_PROGRESS' },
-    { id: 'lab-902', patientId: 'MB-2026-38491A', patientName: 'Amitabh Sen', testName: 'Chest CT Angiography (HRCT)', department: 'RADIOLOGY', orderedBy: 'Dr. Pooja Sawant', orderedAt: '25 mins ago', urgency: 'URGENT', status: 'PENDING' },
-    { id: 'lab-903', patientId: 'MB-2026-99210B', patientName: 'Meera Nair', testName: 'Complete Blood Count & Serum Electrolytes', department: 'PATHOLOGY', orderedBy: 'Dr. Neha Kulkarni', orderedAt: '40 mins ago', urgency: 'ROUTINE', status: 'COMPLETED', resultSummary: 'Hb: 12.4 g/dL, WBC: 8,400 /mcL, K+: 4.1 mEq/L (Normal Range)' },
-    { id: 'lab-904', patientId: 'MB-2026-44109C', patientName: 'Rohan Joshi', testName: 'Non-Contrast Brain CT (Stroke Protocol)', department: 'RADIOLOGY', orderedBy: 'Dr. Sameer Patil', orderedAt: '5 mins ago', urgency: 'STAT', status: 'IN_PROGRESS' },
-  ]);
+  const [labOrders, setLabOrders] = useState<DiagnosticOrder[]>(() => {
+    const realPatients = db.getPatients();
+    if (realPatients.length === 0) return [];
+    return realPatients.slice(0, 4).map((p, idx) => ({
+      id: `lab-${900 + idx + 1}`,
+      patientId: p.patientId,
+      patientName: p.fullName || 'Registered Patient',
+      testName: idx === 0 ? 'Cardiac Troponin I & 12-Lead ECG' : idx === 1 ? 'Complete Blood Count & Serum Electrolytes' : idx === 2 ? 'Chest CT Angiography (HRCT)' : 'Comprehensive Metabolic Panel',
+      department: idx === 0 ? 'CARDIOLOGY' : idx === 1 ? 'PATHOLOGY' : idx === 2 ? 'RADIOLOGY' : 'BIOCHEMISTRY',
+      orderedBy: 'Dr. Anand Deshmukh, MD',
+      orderedAt: `${(idx + 1) * 10} mins ago`,
+      urgency: idx === 0 ? 'STAT' : 'ROUTINE',
+      status: 'IN_PROGRESS'
+    }));
+  });
 
   const updateLabStatus = (id: string, status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED') => {
     setLabOrders(prev => prev.map(o => o.id === id ? { ...o, status } : o));
@@ -520,7 +529,7 @@ export const HospitalPortalSuite: React.FC = () => {
                 value={patientIdInput}
                 onChange={e => setPatientIdInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleVerifyPatient(patientIdInput)}
-                placeholder="Enter Patient Unique ID (e.g. MB-2026-7F42K9)"
+                placeholder="Enter Patient Unique ID (e.g. MB-2026-XXXXXX)"
                 className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono uppercase font-bold tracking-wider focus:outline-none focus:border-teal-500 shadow-inner"
               />
               <button
@@ -543,22 +552,27 @@ export const HospitalPortalSuite: React.FC = () => {
             </div>
 
             {/* Registered Patients in Database */}
-            {db.getPatients().length > 0 && (
+            {db.getPatients().length > 0 ? (
               <div className="flex items-center gap-2 flex-wrap text-xs pt-1">
-                <span className="text-slate-400 font-medium">Registered Patient IDs:</span>
-                {db.getPatients().slice(0, 3).map(s => (
+                <span className="text-slate-500 font-medium">Registered Patient IDs (Quick Select):</span>
+                {db.getPatients().slice(0, 6).map(s => (
                   <button
                     key={s.id || s.patientId}
+                    type="button"
                     onClick={() => {
                       setPatientIdInput(s.patientId);
                       handleVerifyPatient(s.patientId);
                     }}
-                    className="px-2.5 py-1 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 hover:border-teal-300 border border-slate-200 text-slate-700 rounded-lg font-mono text-[11px] font-bold transition flex items-center gap-1 shadow-sm"
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 hover:border-teal-300 border border-slate-200 text-slate-700 rounded-lg font-mono text-[11px] font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
                   >
-                    <span>{s.patientId}</span>
-                    <span className="text-[10px] text-slate-500 font-sans font-normal">({(s.fullName || 'Patient').split(' ')[0]})</span>
+                    <span className="font-mono text-teal-700">{s.patientId}</span>
+                    <span className="text-[10px] text-slate-500 font-sans font-normal">({s.fullName || 'Patient'})</span>
                   </button>
                 ))}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 p-2.5 rounded-xl">
+                ℹ️ No registered patients found yet. Register an account in the Patient Portal to verify records here.
               </div>
             )}
           </div>
@@ -607,8 +621,34 @@ export const HospitalPortalSuite: React.FC = () => {
               <div className="pt-3 flex flex-wrap items-center gap-3 border-t border-amber-200/80">
                 <button
                   type="button"
+                  onClick={() => {
+                    db.saveTrustedHospital({
+                      id: `trust-${Date.now()}`,
+                      patientId: verifiedPatient.profile!.patientId,
+                      patientProfileId: verifiedPatient.profile!.id,
+                      hospitalId: currentHospitalId,
+                      hospitalName: currentHospitalName,
+                      hospitalAddress: 'Main Healthcare Campus, Sector 14',
+                      hospitalCity: 'Mumbai',
+                      grantedAt: new Date().toISOString(),
+                      status: 'ACTIVE',
+                      allowEmergencyAlert: true,
+                      allowMedicalHistory: true,
+                      ambulanceAvailable: true
+                    });
+                    handleVerifyPatient(verifiedPatient.profile!.patientId, false);
+                    showToast('✅ Access Granted', `Authorized hospital access for ${verifiedPatient.profile!.fullName || verifiedPatient.profile!.patientId}.`, 'VERIFICATION');
+                  }}
+                  className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-600/20 transition flex items-center gap-2 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>⚡ 1-CLICK VERIFY &amp; ADMIT TO HOSPITAL</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => handleRequestAccess(verifiedPatient.profile!)}
-                  className="px-5 py-3 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-teal-600/20 transition flex items-center gap-2"
+                  className="px-5 py-3 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-teal-600/20 transition flex items-center gap-2 cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
                   <span>REQUEST ACCESS FROM PATIENT</span>
@@ -617,7 +657,7 @@ export const HospitalPortalSuite: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleEmergencyBreakGlass(verifiedPatient.profile!)}
-                  className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-red-600/20 transition flex items-center gap-2"
+                  className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-red-600/20 transition flex items-center gap-2 cursor-pointer"
                 >
                   <ShieldAlert className="w-4 h-4" />
                   <span>🚨 EMERGENCY ACCESS (Break-Glass)</span>

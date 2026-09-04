@@ -237,7 +237,7 @@ export const DoctorDashboard: React.FC = () => {
                   type="text"
                   value={searchPatientId}
                   onChange={e => setSearchPatientId(e.target.value)}
-                  placeholder="Enter Patient ID (e.g. MB-2026-7F42K9)"
+                  placeholder="Enter Patient ID (e.g. MB-2026-XXXXXX)"
                   className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-800 placeholder-slate-400 font-mono focus:outline-none focus:border-blue-500 uppercase font-bold tracking-wider"
                 />
               </div>
@@ -249,84 +249,74 @@ export const DoctorDashboard: React.FC = () => {
                 <span>Verify &amp; Fetch Records</span>
               </button>
             </form>
-
-            {/* Quick-fill sample IDs */}
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="text-slate-400 font-medium">Quick Try Patient IDs:</span>
-              {[
-                { id: 'MB-2026-7F42K9', name: 'Priya Sharma (Cardiac/Asthma)' },
-                { id: 'MB-2026-38491A', name: 'Amitabh Sen (Post-Op)' },
-                { id: 'MB-2026-99210B', name: 'Meera Nair (Hypertension)' }
-              ].map(sample => (
-                <button
-                  key={sample.id}
-                  type="button"
-                  onClick={() => {
-                    setSearchPatientId(sample.id);
-                    const patient = db.getPatientByPatientId(sample.id) || db.getPatientById(sample.id);
-                    if (patient) {
-                      const pSessions = db.getClinicalSessionsForPatient(patient.patientId);
-                      const pDocs = db.getDocuments(patient.patientId);
-                      const pTimeline = db.getTimeline(patient.patientId);
-                      setSearchResult({
-                        found: true,
-                        patient,
-                        hasConsent: true,
-                        sessions: pSessions,
-                        documents: pDocs,
-                        timeline: pTimeline
-                      });
-                      if (pSessions[0]) setSelectedSession(pSessions[0]);
-                      showToast('✅ Patient Verified', `Retrieved full profile for ${patient.fullName || patient.patientId}`, 'VERIFICATION');
-                    }
-                  }}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 hover:border-teal-300 border border-slate-200 text-slate-700 rounded-lg font-mono text-[11px] font-bold transition flex items-center gap-1"
-                >
-                  <span>{sample.id}</span>
-                  <span className="text-[10px] text-slate-500 font-sans font-normal">({sample.name.split(' ')[0]})</span>
-                </button>
-              ))}
-            </div>
+            {/* Dynamic Recent Registered Patients */}
+            {db.getPatients().length > 0 ? (
+              <div className="flex items-center gap-2 flex-wrap text-xs pt-1">
+                <span className="text-slate-500 font-medium">Recently Registered Patients:</span>
+                {db.getPatients().slice(0, 5).map(sample => (
+                  <button
+                    key={sample.patientId}
+                    type="button"
+                    onClick={async () => {
+                      setSearchPatientId(sample.patientId);
+                      const patient = await cloudDataService.findPatientByPatientId(sample.patientId) || db.getPatientByPatientId(sample.patientId) || sample;
+                      if (patient) {
+                        const pSessions = db.getClinicalSessionsForPatient(patient.patientId);
+                        const pDocs = db.getDocuments(patient.patientId);
+                        const pTimeline = db.getTimeline(patient.patientId);
+                        const doctorHospitalId = doctorProfile?.hospitalId || 'HOSP-2026-00101';
+                        const isAuthorized = db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
+                        setSearchResult({
+                          found: true,
+                          patient,
+                          hasConsent: isAuthorized,
+                          sessions: pSessions,
+                          documents: pDocs,
+                          timeline: pTimeline
+                        });
+                        if (pSessions[0]) setSelectedSession(pSessions[0]);
+                        showToast('✅ Patient Verified', `Retrieved full profile for ${patient.fullName || patient.patientId}`, 'VERIFICATION');
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-800 hover:border-blue-300 border border-slate-200 text-slate-700 rounded-lg font-mono text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span className="font-mono text-blue-700">{sample.patientId}</span>
+                    <span className="text-[10px] text-slate-500 font-sans font-normal">({sample.fullName || 'Registered Patient'})</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 p-2.5 rounded-xl">
+                ℹ️ No registered patients in database yet. Create an account in the Patient Portal to verify and lookup here.
+              </div>
+            )}
           </div>
 
-          {/* Search Results Comprehensive View */}
+          {/* Search Results Display */}
           {searchResult && (
-            <div className="pt-2 space-y-6">
-              {!searchResult.found ? (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-center gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                  <span>{searchResult.message}</span>
-                </div>
-              ) : (
+            <div className="pt-4 border-t border-slate-200 animate-fadeIn">
+              {searchResult.found && searchResult.patient ? (
                 <div className="space-y-6">
-                  {/* Patient Demographic Banner */}
-                  <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                  {/* Verified Patient Header Card */}
+                  <div className="p-6 bg-blue-50/60 border border-blue-200 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-extrabold text-xl shadow-sm">
-                        <User className="w-7 h-7" />
+                      <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white font-black text-xl flex items-center justify-center shadow-md shadow-blue-600/20">
+                        {searchResult.patient.fullName?.split(' ').map(n => n[0]).join('').slice(0, 2) || 'P'}
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-lg font-black text-slate-900">
-                            {searchResult.patient?.fullName || 'Registered Patient'}
-                          </h4>
-                          <span className="font-mono text-xs font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                            {searchResult.patient?.patientId}
-                          </span>
-                          <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded font-bold uppercase flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> ABDM Verified
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-lg font-black text-slate-900">{searchResult.patient.fullName || 'Registered Patient'}</h4>
+                          <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> ABDM / MediBridge Verified
                           </span>
                         </div>
-                        <p className="text-xs text-slate-700 mt-1">
-                          Age: <strong>{searchResult.patient?.age ? `${searchResult.patient.age} yrs` : '32 yrs'}</strong> • Gender: <strong>{searchResult.patient?.gender || 'Female'}</strong> • Blood Group: <strong className="text-red-600 font-bold">{searchResult.patient?.bloodGroup || 'O+'}</strong> • City: <strong>{searchResult.patient?.city || 'Talegaon Dabhade'}</strong>
-                        </p>
-                        <p className="text-[11px] text-slate-500 mt-0.5">
-                          Emergency Contact: {searchResult.patient?.emergencyContactName || 'Rahul Sharma'} ({searchResult.patient?.emergencyContactPhone || '+91 98230 44812'})
+                        <p className="text-xs text-slate-600 font-mono mt-0.5">
+                          ID: <strong className="text-blue-700 font-bold">{searchResult.patient.patientId}</strong> • ABHA: <span>{searchResult.patient.abhaId || '91-XXXX-XXXX-XXXX'}</span> • Age: {searchResult.patient.age || '—'}y • Gender: {searchResult.patient.gender} • Blood: <span className="font-bold text-red-600">{searchResult.patient.bloodGroup || '—'}</span>
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-2">
                       <div className="bg-white px-3.5 py-2 rounded-2xl border border-slate-200 text-center shadow-sm">
                         <span className="text-[10px] text-slate-500 block uppercase font-bold">Diagnostic Reports</span>
                         <span className="text-teal-700 font-bold font-mono text-sm">{searchResult.documents.length} Files</span>
@@ -358,8 +348,8 @@ export const DoctorDashboard: React.FC = () => {
                             </span>
                           ))
                         ) : (
-                          <span className="text-xs bg-white text-slate-600 border border-slate-200 px-2 py-0.5 rounded-lg">
-                            Penicillin, Sulfa Drugs
+                          <span className="text-xs text-slate-500 italic">
+                            No known allergies documented
                           </span>
                         )}
                       </div>
@@ -379,8 +369,8 @@ export const DoctorDashboard: React.FC = () => {
                             </span>
                           ))
                         ) : (
-                          <span className="text-xs bg-white text-amber-900 border border-amber-300 font-medium px-2 py-0.5 rounded-lg">
-                            Asthma (Moderate), Hypertension
+                          <span className="text-xs text-slate-500 italic">
+                            No chronic conditions reported
                           </span>
                         )}
                       </div>
@@ -400,8 +390,8 @@ export const DoctorDashboard: React.FC = () => {
                             </span>
                           ))
                         ) : (
-                          <span className="text-xs bg-white text-teal-900 border border-teal-300 font-medium px-2 py-0.5 rounded-lg">
-                            💊 Salbutamol Inhaler, Amlodipine 5mg
+                          <span className="text-xs text-slate-500 italic">
+                            No active medications documented
                           </span>
                         )}
                       </div>
@@ -566,6 +556,11 @@ export const DoctorDashboard: React.FC = () => {
                       </div>
                     </div>
                   )}
+                </div>
+              ) : (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-center gap-3">
+                  <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+                  <span>{searchResult.message || 'No patient record found.'}</span>
                 </div>
               )}
             </div>

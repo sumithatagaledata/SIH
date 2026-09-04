@@ -290,6 +290,15 @@ function setStorageItem(key: string, value: string): void {
   }
 }
 
+// Global Storage Event Listener for Multi-Tab / Multi-Window Sync
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key && e.key.startsWith('medibridge_')) {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { key: e.key } }));
+    }
+  });
+}
+
 function initializeStorage<T>(key: string, initialData: T): T {
   try {
     const existing = getStorageItem(key);
@@ -321,16 +330,24 @@ export class MockDatabase {
 
   private init(): void {
     // One-time cleanup to clear previously stored dummy records from localStorage
-    const CLEANUP_KEY = 'medibridge_admin_clear_all_registered_records_v2';
+    const CLEANUP_KEY = 'medibridge_admin_clear_all_registered_records_v4';
     if (!getStorageItem(CLEANUP_KEY)) {
-      setStorageItem(STORAGE_KEYS.PATIENTS, JSON.stringify([]));
-      setStorageItem(STORAGE_KEYS.HOSPITAL_ACCOUNTS, JSON.stringify([]));
-      setStorageItem(STORAGE_KEYS.TRUSTED_HOSPITALS, JSON.stringify([]));
-      setStorageItem(STORAGE_KEYS.SESSIONS, JSON.stringify([]));
-      setStorageItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify([]));
-      setStorageItem(STORAGE_KEYS.TIMELINE, JSON.stringify([]));
-      setStorageItem(STORAGE_KEYS.DOCTORS, JSON.stringify([]));
-      setStorageItem(STORAGE_KEYS.USERS, JSON.stringify(SEED_USERS));
+      // Purge fake mock patient entries from old test runs
+      const FAKE_PATIENT_IDS = ['MB-2026-7F42K9', 'MB-2026-38491A', 'MB-2026-99210B', 'MB-2026-44109C'];
+      try {
+        const rawPat = getStorageItem(STORAGE_KEYS.PATIENTS);
+        if (rawPat) {
+          const list: any[] = JSON.parse(rawPat);
+          const cleaned = list.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
+          setStorageItem(STORAGE_KEYS.PATIENTS, JSON.stringify(cleaned));
+        }
+        const rawCloud = getStorageItem('medibridge_cloud_patients_cache');
+        if (rawCloud) {
+          const cList: any[] = JSON.parse(rawCloud);
+          const cCleaned = cList.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
+          setStorageItem('medibridge_cloud_patients_cache', JSON.stringify(cCleaned));
+        }
+      } catch {}
       setStorageItem(CLEANUP_KEY, 'true');
     }
 
@@ -494,7 +511,25 @@ export class MockDatabase {
   }
 
   public getPatientByUserId(userId: string): PatientProfile | undefined {
-    return this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS).find(p => p.userId === userId);
+    if (!userId) return undefined;
+    const cleanUser = userId.trim();
+    const patients = this.getItems<PatientProfile>(STORAGE_KEYS.PATIENTS);
+    const found = patients.find(p => p.userId === cleanUser || p.id === cleanUser || p.patientId === cleanUser);
+    if (found) return found;
+
+    try {
+      const cached = getStorageItem('medibridge_cloud_patients_cache');
+      if (cached) {
+        const parsed: any[] = JSON.parse(cached);
+        const match = parsed.find(p => p.userId === cleanUser || p.id === cleanUser || p.patientId === cleanUser);
+        if (match) {
+          this.createPatientProfile(match);
+          return match;
+        }
+      }
+    } catch {}
+
+    return undefined;
   }
 
   public getPatientById(id: string): PatientProfile | undefined {

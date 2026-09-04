@@ -288,11 +288,26 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
               </h2>
             </div>
             <div className="flex flex-wrap items-center gap-2 pt-1">
-              <span className="text-xs font-mono font-bold bg-teal-50 text-teal-800 border border-teal-200 px-3 py-1 rounded-lg">
-                Patient ID: {patientProfile?.patientId || 'MB-2026-7F42K9'}
-              </span>
+              <div className="flex items-center gap-1.5 bg-teal-50 text-teal-800 border border-teal-200 px-3 py-1 rounded-lg">
+                <span className="text-xs font-mono font-bold">
+                  Patient ID: {patientProfile?.patientId || 'MB-2026-ACTIVE'}
+                </span>
+                {patientProfile?.patientId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(patientProfile.patientId);
+                      alert(`Copied Patient ID: ${patientProfile.patientId}`);
+                    }}
+                    className="p-1 hover:bg-teal-100 rounded text-teal-700 transition cursor-pointer"
+                    title="Copy Patient ID"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
               <span className="text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 font-mono">
-                ABHA: {patientProfile?.abhaId || 'Linked on Registration'}
+                ABHA: {patientProfile?.abhaId || '91-XXXX-XXXX-XXXX'}
               </span>
             </div>
           </div>
