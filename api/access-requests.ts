@@ -62,7 +62,17 @@ export default async function handler(req: any, res: any) {
       const items = await fetchAccessRequestsFromCloud();
       if (patientId) {
         const clean = String(patientId).trim().toUpperCase();
-        const filtered = items.filter(r => (r.patientId || '').trim().toUpperCase() === clean);
+        const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+        const queryCore = cleanAlpha.length >= 6 ? cleanAlpha.slice(-6) : cleanAlpha;
+        const normalizedQuery = cleanAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+
+        const filtered = items.filter(r => {
+          const rId = (r.patientId || '').trim().toUpperCase();
+          const rAlpha = rId.replace(/[^A-Z0-9]/g, '');
+          const rCore = rAlpha.length >= 6 ? rAlpha.slice(-6) : rAlpha;
+          const normalizedR = rAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+          return rId === clean || rAlpha === cleanAlpha || normalizedQuery === normalizedR || (queryCore.length >= 4 && queryCore === rCore);
+        });
         return res.status(200).json({ success: true, count: filtered.length, requests: filtered });
       }
       return res.status(200).json({ success: true, count: items.length, requests: items });

@@ -125,6 +125,38 @@ export const DoctorDashboard: React.FC = () => {
     );
   };
 
+  const [requestPending, setRequestPending] = useState(false);
+
+  const handleRequestPatientAccess = async (patient: PatientProfile) => {
+    setRequestPending(true);
+    const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || 'HOSP-2026-00101';
+    const doctorHospitalName = doctorProfile?.hospitalName || hospitalAccount?.hospitalName || 'Apex Super Speciality Hospital';
+    const doctorName = currentUser?.fullName || 'Dr. Vikram Deshmukh, MD';
+
+    try {
+      await cloudDataService.createAccessRequest({
+        patientId: patient.patientId,
+        patientName: patient.fullName,
+        hospitalId: doctorHospitalId,
+        hospitalName: doctorHospitalName,
+        doctorId: currentUser?.id,
+        doctorName: doctorName,
+        requestedBy: doctorName,
+        accessScope: 'Full Medical History & AI Clinical Intake Summaries'
+      });
+
+      showToast(
+        '📩 Access Request Sent',
+        `Live access request dispatched to Patient ${patient.patientId}. An approval prompt will appear on the patient's device immediately.`,
+        'INFO'
+      );
+    } catch (err) {
+      showToast('Error', 'Failed to dispatch access request.', 'EMERGENCY');
+    } finally {
+      setRequestPending(false);
+    }
+  };
+
   const handleExecuteBreakGlass = () => {
     if (!breakGlassPatient) return;
 
@@ -329,6 +361,16 @@ export const DoctorDashboard: React.FC = () => {
                         <span className="text-[10px] text-slate-500 block uppercase font-bold">AI Intakes</span>
                         <span className="text-purple-700 font-bold font-mono text-sm">{searchResult.sessions.length} Episodes</span>
                       </div>
+
+                      <button
+                        type="button"
+                        disabled={requestPending}
+                        onClick={() => handleRequestPatientAccess(searchResult.patient!)}
+                        className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold text-xs rounded-2xl shadow-md flex items-center gap-2 transition cursor-pointer disabled:opacity-50"
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>{requestPending ? 'Dispatching...' : '📩 Request Patient Consent'}</span>
+                      </button>
                     </div>
                   </div>
 

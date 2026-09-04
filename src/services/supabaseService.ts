@@ -786,6 +786,17 @@ class CloudDataService {
     // 1. Save to cloud database
     await cloudDb.saveAccessRequest(newRequest);
 
+    // Redundant Serverless write
+    if (typeof window !== 'undefined' && window.location) {
+      try {
+        await fetch('/api/access-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newRequest)
+        });
+      } catch {}
+    }
+
     // 2. Save locally
     const all = this.getAccessRequests();
     const filtered = all.filter(r => !(r.patientId === newRequest.patientId && r.hospitalId === newRequest.hospitalId && r.status === 'PENDING'));
@@ -984,8 +995,49 @@ class CloudDataService {
   public async getPendingRequestsForPatient(patientId: string): Promise<AccessRequest[]> {
     if (!patientId) return [];
     const clean = patientId.trim().toUpperCase();
+    const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+    const queryCore = cleanAlpha.length >= 6 ? cleanAlpha.slice(-6) : cleanAlpha;
+
+    // 1. Fetch from cloud database engine
+    try {
+      const cloudReqs = await cloudDb.getAccessRequests();
+      const pending = cloudReqs.filter(r => {
+        if (r.status !== 'PENDING') return false;
+        const rId = (r.patientId || '').trim().toUpperCase();
+        const rAlpha = rId.replace(/[^A-Z0-9]/g, '');
+        const rCore = rAlpha.length >= 6 ? rAlpha.slice(-6) : rAlpha;
+        const normalizedQuery = cleanAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+        const normalizedR = rAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+        return rId === clean || rAlpha === cleanAlpha || normalizedQuery === normalizedR || (queryCore.length >= 4 && queryCore === rCore);
+      });
+      if (pending.length > 0) return pending as any[];
+    } catch {}
+
+    // 2. Fetch from serverless endpoint
+    try {
+      if (typeof window !== 'undefined' && window.location) {
+        const res = await fetch(`/api/access-requests?patientId=${encodeURIComponent(clean)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.requests)) {
+            const serverlessPending = json.requests.filter((r: any) => r.status === 'PENDING');
+            if (serverlessPending.length > 0) return serverlessPending;
+          }
+        }
+      }
+    } catch {}
+
+    // 3. Fallback to local cache
     const all = this.getAccessRequests();
-    return all.filter(r => r.patientId === clean && r.status === 'PENDING');
+    return all.filter(r => {
+      if (r.status !== 'PENDING') return false;
+      const rId = (r.patientId || '').trim().toUpperCase();
+      const rAlpha = rId.replace(/[^A-Z0-9]/g, '');
+      const rCore = rAlpha.length >= 6 ? rAlpha.slice(-6) : rAlpha;
+      const normalizedQuery = cleanAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+      const normalizedR = rAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+      return rId === clean || rAlpha === cleanAlpha || normalizedQuery === normalizedR || (queryCore.length >= 4 && queryCore === rCore);
+    });
   }
 
   public async getActivePermissionsForPatient(patientId: string): Promise<AccessRequest[]> {

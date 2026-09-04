@@ -86,7 +86,12 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
     };
     window.addEventListener('medibridge_db_update', handleUpdate);
     window.addEventListener('medibridge_db_reset', handleUpdate);
+
+    // Continuous cloud polling interval to ensure requests appear within 2 seconds
+    const pollInterval = setInterval(loadPendingRequests, 2500);
+
     return () => {
+      clearInterval(pollInterval);
       unsub1?.();
       unsub2?.();
       window.removeEventListener('medibridge_db_update', handleUpdate);
