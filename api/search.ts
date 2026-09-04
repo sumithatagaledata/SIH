@@ -51,6 +51,8 @@ export default async function handler(req: any, res: any) {
           const pEmail = (p.email || '').trim().toLowerCase();
           const pPhone = (p.phone || p.emergencyContactPhone || '').replace(/[^0-9]/g, '');
           const queryNumeric = cleanId.replace(/[^0-9]/g, '');
+          const pName = (p.fullName || '').trim().toLowerCase();
+          const queryLower = String(rawId).trim().toLowerCase();
 
           return (
             pId === cleanId ||
@@ -58,6 +60,7 @@ export default async function handler(req: any, res: any) {
             pInternalId === cleanId ||
             pInternalAlpha === cleanAlpha ||
             (pAbha && (pAbha === cleanId || pAbhaAlpha === cleanAlpha)) ||
+            (queryLower.length >= 2 && pName.includes(queryLower)) ||
             (cleanId.toLowerCase().includes('@') && pEmail === cleanId.toLowerCase()) ||
             (queryNumeric.length >= 10 && pPhone.endsWith(queryNumeric.slice(-10))) ||
             (cleanAlpha.length >= 4 && (pIdAlpha.endsWith(cleanAlpha) || cleanAlpha.endsWith(pIdAlpha)))
