@@ -331,44 +331,16 @@ export class MockDatabase {
 
   private init(): void {
     // Universal cleanup to purge any previously stored mock sessions, dummy documents, and fake patients
-    const CLEANUP_KEY = 'medibridge_admin_purge_all_mock_data_v6';
+    const CLEANUP_KEY = 'medibridge_purge_all_old_hospital_requests_v7';
     if (!getStorageItem(CLEANUP_KEY)) {
-      const FAKE_PATIENT_IDS = ['MB-2026-7F42K9', 'MB-2026-38491A', 'MB-2026-99210B', 'MB-2026-44109C', 'MB-2026-TEST99'];
       try {
-        const rawPat = getStorageItem(STORAGE_KEYS.PATIENTS);
-        if (rawPat) {
-          const list: any[] = JSON.parse(rawPat);
-          const cleaned = list.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId) && p.fullName !== 'Test Patient');
-          setStorageItem(STORAGE_KEYS.PATIENTS, JSON.stringify(cleaned));
-        }
-        const rawCloud = getStorageItem('medibridge_cloud_patients_cache');
-        if (rawCloud) {
-          const cList: any[] = JSON.parse(rawCloud);
-          const cCleaned = cList.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId) && p.fullName !== 'Test Patient');
-          setStorageItem('medibridge_cloud_patients_cache', JSON.stringify(cCleaned));
-        }
-
-        // Purge dummy sessions, documents, and timelines from older dev versions
-        const rawSessions = getStorageItem(STORAGE_KEYS.SESSIONS);
-        if (rawSessions) {
-          const sList: any[] = JSON.parse(rawSessions);
-          const sCleaned = sList.filter(s => s.patientId && !FAKE_PATIENT_IDS.includes(s.patientId));
-          setStorageItem(STORAGE_KEYS.SESSIONS, JSON.stringify(sCleaned));
-        }
-
-        const rawDocs = getStorageItem(STORAGE_KEYS.DOCUMENTS);
-        if (rawDocs) {
-          const dList: any[] = JSON.parse(rawDocs);
-          const dCleaned = dList.filter(d => d.patientId && !FAKE_PATIENT_IDS.includes(d.patientId));
-          setStorageItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(dCleaned));
-        }
-
-        const rawTimeline = getStorageItem(STORAGE_KEYS.TIMELINE);
-        if (rawTimeline) {
-          const tList: any[] = JSON.parse(rawTimeline);
-          const tCleaned = tList.filter(t => t.patientId && !FAKE_PATIENT_IDS.includes(t.patientId));
-          setStorageItem(STORAGE_KEYS.TIMELINE, JSON.stringify(tCleaned));
-        }
+        setStorageItem(STORAGE_KEYS.SESSIONS, '[]');
+        setStorageItem(STORAGE_KEYS.EMERGENCIES, '[]');
+        setStorageItem(STORAGE_KEYS.APPOINTMENTS, '[]');
+        setStorageItem(STORAGE_KEYS.NOTIFICATIONS, '[]');
+        setStorageItem('medibridge_cloud_sessions_cache', '[]');
+        setStorageItem('medibridge_cloud_emergencies_cache', '[]');
+        setStorageItem('medibridge_cloud_appointments_cache', '[]');
       } catch {}
       setStorageItem(CLEANUP_KEY, 'true');
     }
@@ -876,6 +848,61 @@ export class MockDatabase {
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'SAVE_CLINICAL_SESSION', session } }));
     }
+  }
+
+  public deleteClinicalSession(id: string): void {
+    const sessions = this.getClinicalSessions().filter(s => s.id !== id);
+    this.setItems(STORAGE_KEYS.SESSIONS, sessions);
+    try {
+      setStorageItem('medibridge_cloud_sessions_cache', JSON.stringify(sessions));
+    } catch {}
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'DELETE_CLINICAL_SESSION', id } }));
+    }
+  }
+
+  public clearClinicalSessions(): void {
+    this.setItems(STORAGE_KEYS.SESSIONS, []);
+    try {
+      setStorageItem('medibridge_cloud_sessions_cache', '[]');
+    } catch {}
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'CLEAR_CLINICAL_SESSIONS' } }));
+    }
+  }
+
+  public clearEmergencyAlerts(): void {
+    this.setItems(STORAGE_KEYS.EMERGENCIES, []);
+    try {
+      setStorageItem('medibridge_cloud_emergencies_cache', '[]');
+    } catch {}
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'CLEAR_EMERGENCIES' } }));
+    }
+  }
+
+  public clearAppointments(): void {
+    this.setItems(STORAGE_KEYS.APPOINTMENTS, []);
+    try {
+      setStorageItem('medibridge_cloud_appointments_cache', '[]');
+    } catch {}
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'CLEAR_APPOINTMENTS' } }));
+    }
+  }
+
+  public clearNotifications(): void {
+    this.setItems(STORAGE_KEYS.NOTIFICATIONS, []);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'CLEAR_NOTIFICATIONS' } }));
+    }
+  }
+
+  public clearAllOldRequests(): void {
+    this.clearClinicalSessions();
+    this.clearEmergencyAlerts();
+    this.clearAppointments();
+    this.clearNotifications();
   }
 
   // Documents

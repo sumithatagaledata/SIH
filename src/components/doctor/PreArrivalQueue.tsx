@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import {
   Users, Siren, Clock, Filter, AlertTriangle, CheckCircle2,
-  Stethoscope, FileText, ChevronRight, Activity
+  Stethoscope, FileText, ChevronRight, Activity, Trash2,
+  RefreshCw, Check
 } from 'lucide-react';
 import { ClinicalSession, TriagePriority } from '../../types';
 import { db } from '../../services/mockDatabase';
+import { useNotification } from '../../context/NotificationContext';
 
 interface PreArrivalQueueProps {
   onSelectSession: (session: ClinicalSession) => void;
@@ -15,6 +17,7 @@ export const PreArrivalQueue: React.FC<PreArrivalQueueProps> = ({
   onSelectSession,
   selectedSessionId
 }) => {
+  const { showToast } = useNotification();
   const [filterPriority, setFilterPriority] = useState<string>('ALL');
   const [sessions, setSessions] = useState<ClinicalSession[]>(() => db.getClinicalSessions());
 
@@ -27,6 +30,20 @@ export const PreArrivalQueue: React.FC<PreArrivalQueueProps> = ({
       window.removeEventListener('medibridge_db_reset', handleUpdate);
     };
   }, []);
+
+  const handleClearAll = () => {
+    if (sessions.length === 0) return;
+    db.clearClinicalSessions();
+    setSessions([]);
+    showToast('Queue Cleared', 'All old pre-arrival requests have been cleared.', 'INFO');
+  };
+
+  const handleDeleteSession = (e: React.MouseEvent, sessionId: string, patientName: string) => {
+    e.stopPropagation();
+    db.deleteClinicalSession(sessionId);
+    setSessions(prev => prev.filter(s => s.id !== sessionId));
+    showToast('Request Removed', `Removed intake request for ${patientName}.`, 'INFO');
+  };
 
   const filteredSessions = filterPriority === 'ALL'
     ? sessions
@@ -94,21 +111,34 @@ export const PreArrivalQueue: React.FC<PreArrivalQueueProps> = ({
           </p>
         </div>
 
-        {/* Priority Filter Buttons */}
-        <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-[11px]">
-          {['ALL', 'RED', 'YELLOW', 'GREEN'].map(p => (
+        <div className="flex items-center gap-2 flex-wrap">
+          {sessions.length > 0 && (
             <button
-              key={p}
-              onClick={() => setFilterPriority(p)}
-              className={`px-2.5 py-1 rounded-lg font-bold transition ${
-                filterPriority === p
-                  ? 'bg-teal-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              onClick={handleClearAll}
+              className="px-2.5 py-1 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-xl transition flex items-center gap-1 shadow-sm"
+              title="Clear all requests and start fresh"
             >
-              {p}
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Clear Queue</span>
             </button>
-          ))}
+          )}
+
+          {/* Priority Filter Buttons */}
+          <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-[11px]">
+            {['ALL', 'RED', 'YELLOW', 'GREEN'].map(p => (
+              <button
+                key={p}
+                onClick={() => setFilterPriority(p)}
+                className={`px-2.5 py-1 rounded-lg font-bold transition ${
+                  filterPriority === p
+                    ? 'bg-teal-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -147,7 +177,16 @@ export const PreArrivalQueue: React.FC<PreArrivalQueueProps> = ({
                         Session: {s.id}
                       </p>
                     </div>
-                    {getPriorityBadge(s.triagePriority)}
+                    <div className="flex items-center gap-1.5">
+                      {getPriorityBadge(s.triagePriority)}
+                      <button
+                        onClick={(e) => handleDeleteSession(e, s.id, s.patientName)}
+                        className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                        title="Dismiss / Remove this request"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <p className="text-xs text-slate-700 mt-2 font-medium line-clamp-2">
