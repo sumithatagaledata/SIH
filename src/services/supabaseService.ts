@@ -964,34 +964,69 @@ class CloudDataService {
     syncRelay.publish('access_requests_changed', { patientId: cleanPatientId, hospitalId, status: 'REVOKED' });
   }
 
-  public checkHospitalAccess(hospitalId: string, patientId: string): {
+  public async checkHospitalAccess(hospitalId: string, patientId: string): Promise<{
     isAuthorized: boolean;
     status: 'NONE' | 'PENDING' | 'APPROVED' | 'DENIED' | 'REVOKED';
     activeRequest?: AccessRequest;
-  } {
+  }> {
     return this.checkAccessStatus(hospitalId, patientId);
   }
 
-  public checkAccessStatus(hospitalId: string, patientId: string): {
+  public async checkAccessStatus(hospitalId: string, patientId: string): Promise<{
     isAuthorized: boolean;
     status: 'NONE' | 'PENDING' | 'APPROVED' | 'DENIED' | 'REVOKED';
     activeRequest?: AccessRequest;
-  } {
+  }> {
     if (!hospitalId || !patientId) return { isAuthorized: false, status: 'NONE' };
     const cleanPatientId = patientId.trim().toUpperCase();
+    const cleanAlpha = cleanPatientId.replace(/[^A-Z0-9]/g, '');
+    const queryCore = cleanAlpha.length >= 6 ? cleanAlpha.slice(-6) : cleanAlpha;
+    const cleanHospitalId = hospitalId.trim().toUpperCase();
 
-    // 1. Check access requests
-    const all = this.getAccessRequests();
-    const req = all.find(r => r.patientId === cleanPatientId && r.hospitalId === hospitalId);
-
-    if (req) {
-      if (req.status === 'APPROVED') {
-        return { isAuthorized: true, status: 'APPROVED', activeRequest: req };
+    // 1. Check Serverless API endpoint
+    try {
+      if (typeof window !== 'undefined' && window.location) {
+        const res = await fetch(`/api/access-requests?patientId=${encodeURIComponent(cleanPatientId)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.requests)) {
+            const req = json.requests.find((r: any) => {
+              const rHosp = (r.hospitalId || '').trim().toUpperCase();
+              return rHosp === cleanHospitalId || (r.hospitalName && cleanHospitalId.includes(r.hospitalName.toUpperCase()));
+            });
+            if (req) {
+              if (req.status === 'APPROVED') {
+                return { isAuthorized: true, status: 'APPROVED', activeRequest: req };
+              }
+              return { isAuthorized: false, status: req.status, activeRequest: req };
+            }
+          }
+        }
       }
-      return { isAuthorized: false, status: req.status, activeRequest: req };
-    }
+    } catch {}
 
-    // 2. Check trusted hospital status from database
+    // 2. Check Cloud Database Engine
+    try {
+      const cloudReqs = await cloudDb.getAccessRequests();
+      const req = cloudReqs.find(r => {
+        const rPat = (r.patientId || '').trim().toUpperCase();
+        const rPatAlpha = rPat.replace(/[^A-Z0-9]/g, '');
+        const rPatCore = rPatAlpha.length >= 6 ? rPatAlpha.slice(-6) : rPatAlpha;
+        const rHosp = (r.hospitalId || '').trim().toUpperCase();
+        const patMatch = rPat === cleanPatientId || rPatAlpha === cleanAlpha || (queryCore.length >= 4 && queryCore === rPatCore);
+        const hospMatch = rHosp === cleanHospitalId || (r.hospitalName && cleanHospitalId.includes(r.hospitalName.toUpperCase()));
+        return patMatch && hospMatch;
+      });
+
+      if (req) {
+        if (req.status === 'APPROVED') {
+          return { isAuthorized: true, status: 'APPROVED', activeRequest: req as any };
+        }
+        return { isAuthorized: false, status: req.status as any, activeRequest: req as any };
+      }
+    } catch {}
+
+    // 3. Check trusted hospital status from local database
     const isDbAuthorized = db.isHospitalAuthorizedForPatient(hospitalId, cleanPatientId);
     if (isDbAuthorized) {
       return { isAuthorized: true, status: 'APPROVED' };
@@ -1006,22 +1041,7 @@ class CloudDataService {
     const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
     const queryCore = cleanAlpha.length >= 6 ? cleanAlpha.slice(-6) : cleanAlpha;
 
-    // 1. Fetch from cloud database engine
-    try {
-      const cloudReqs = await cloudDb.getAccessRequests();
-      const pending = cloudReqs.filter(r => {
-        if (r.status !== 'PENDING') return false;
-        const rId = (r.patientId || '').trim().toUpperCase();
-        const rAlpha = rId.replace(/[^A-Z0-9]/g, '');
-        const rCore = rAlpha.length >= 6 ? rAlpha.slice(-6) : rAlpha;
-        const normalizedQuery = cleanAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
-        const normalizedR = rAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
-        return rId === clean || rAlpha === cleanAlpha || normalizedQuery === normalizedR || (queryCore.length >= 4 && queryCore === rCore);
-      });
-      if (pending.length > 0) return pending as any[];
-    } catch {}
-
-    // 2. Fetch from serverless endpoint
+    // 1. Fetch from serverless endpoint (primary single source of truth)
     try {
       if (typeof window !== 'undefined' && window.location) {
         const res = await fetch(`/api/access-requests?patientId=${encodeURIComponent(clean)}`);
@@ -1029,23 +1049,28 @@ class CloudDataService {
           const json = await res.json();
           if (json.success && Array.isArray(json.requests)) {
             const serverlessPending = json.requests.filter((r: any) => r.status === 'PENDING');
-            if (serverlessPending.length > 0) return serverlessPending;
+            this.setAccessRequests(json.requests);
+            return serverlessPending;
           }
         }
       }
     } catch {}
 
-    // 3. Fallback to local cache
-    const all = this.getAccessRequests();
-    return all.filter(r => {
-      if (r.status !== 'PENDING') return false;
-      const rId = (r.patientId || '').trim().toUpperCase();
-      const rAlpha = rId.replace(/[^A-Z0-9]/g, '');
-      const rCore = rAlpha.length >= 6 ? rAlpha.slice(-6) : rAlpha;
-      const normalizedQuery = cleanAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
-      const normalizedR = rAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
-      return rId === clean || rAlpha === cleanAlpha || normalizedQuery === normalizedR || (queryCore.length >= 4 && queryCore === rCore);
-    });
+    // 2. Fetch from cloud database engine
+    try {
+      const cloudReqs = await cloudDb.getAccessRequests();
+      const matched = cloudReqs.filter(r => {
+        const rId = (r.patientId || '').trim().toUpperCase();
+        const rAlpha = rId.replace(/[^A-Z0-9]/g, '');
+        const rCore = rAlpha.length >= 6 ? rAlpha.slice(-6) : rAlpha;
+        const normalizedQuery = cleanAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+        const normalizedR = rAlpha.replace(/^MH/, 'MB').replace(/^PT/, 'MB');
+        return rId === clean || rAlpha === cleanAlpha || normalizedQuery === normalizedR || (queryCore.length >= 4 && queryCore === rCore);
+      });
+      return matched.filter(r => r.status === 'PENDING') as any[];
+    } catch {}
+
+    return [];
   }
 
   public async getActivePermissionsForPatient(patientId: string): Promise<AccessRequest[]> {
