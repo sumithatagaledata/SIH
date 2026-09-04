@@ -228,7 +228,7 @@ class CloudDataService {
       const cleanPatientId = patient.patientId.trim().toUpperCase();
 
       // 1. Save to single persistent cloud database
-      await cloudDb.savePatient({
+      const cloudPayload = {
         id: patient.id,
         userId: user.id,
         patientId: cleanPatientId,
@@ -251,9 +251,22 @@ class CloudDataService {
         allergies: patient.allergies || [],
         chronicConditions: patient.chronicConditions || [],
         currentMedications: patient.currentMedications || [],
-        status: 'ACTIVE',
+        status: 'ACTIVE' as const,
         createdAt: new Date().toISOString()
-      });
+      };
+
+      await cloudDb.savePatient(cloudPayload);
+
+      // Redundant Serverless Cloud write
+      if (typeof window !== 'undefined' && window.location) {
+        try {
+          await fetch('/api/patients', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cloudPayload)
+          });
+        } catch {}
+      }
 
       // 2. Save to local high-fidelity cache
       db.createUser(user);
