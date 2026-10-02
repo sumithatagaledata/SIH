@@ -78,19 +78,15 @@ export class OCRService {
       ]
     };
 
-    const rawDataUrl = (file as any).base64 || (file as any).fileData || (file as any).fileUrl || '';
-    const mimeType = (file as any).type || (file as any).mimeType || (fileName.endsWith('.pdf') ? 'application/pdf' : fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' : 'application/pdf');
-
     const newDoc: MedicalDocument = {
       id: docId,
       patientId,
       fileName: file.name || 'Medical_Record_Upload.pdf',
       fileType,
       uploadDate: new Date().toISOString(),
-      fileUrl: rawDataUrl || '',
-      fileData: rawDataUrl || undefined,
-      mimeType,
-      fileSize: `${(((file.size || 1024 * 1024)) / (1024 * 1024)).toFixed(1)} MB`,
+      fileUrl: `/api/documents?id=${docId}`,
+      downloadUrl: `/api/documents?id=${docId}&download=true`,
+      fileSize: `${((file.size || 1024 * 1024) / (1024 * 1024)).toFixed(1)} MB`,
       status: 'COMPLETED',
       extractedData: extraction
     };

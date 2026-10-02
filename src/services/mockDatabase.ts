@@ -32,8 +32,19 @@ const SEED_HOSPITAL_ACCOUNTS: HospitalAccount[] = [];
 // Seed Trusted Hospitals (Empty)
 const SEED_TRUSTED_HOSPITALS: TrustedHospital[] = [];
 
-// Seed Users (Empty: Only real registered users appear)
-const SEED_USERS: User[] = [];
+// Platform Administrator Account (System oversight only)
+const SEED_USERS: User[] = [
+  {
+    id: 'usr-admin-01',
+    email: 'admin@medibridge.ai',
+    password: 'Admin@123',
+    phone: '+91 99300 88777',
+    fullName: 'System Administrator',
+    role: 'ADMIN',
+    avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80',
+    createdAt: '2025-10-01T08:00:00Z'
+  }
+];
 
 // Seed Patient Profiles (Empty: Only real registered patients appear)
 const SEED_PATIENTS: PatientProfile[] = [];

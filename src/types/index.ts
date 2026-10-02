@@ -182,10 +182,12 @@ export interface MedicalDocument {
   fileType: 'PRESCRIPTION' | 'LAB_REPORT' | 'DISCHARGE_SUMMARY' | 'RADIOLOGY_REPORT';
   uploadDate: string;
   fileUrl: string;
-  fileData?: string;
-  mimeType?: string;
+  downloadUrl?: string;
   fileSize: string;
   status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  mimeType?: string;
+  fileData?: string;
+  filePath?: string;
   extractedData?: DocumentExtraction;
 }
 
@@ -519,7 +521,7 @@ export interface AuditLog {
   actorId: string;
   actorName: string;
   actorRole: UserRole;
-  action: 'LOGIN' | 'INTAKE_STARTED' | 'INTAKE_COMPLETED' | 'DOCUMENT_UPLOADED' | 'OCR_EXTRACTED' | 'RED_FLAG_TRIGGERED' | 'EMERGENCY_DISPATCHED' | 'RECORD_VIEWED' | 'RECORD_VERIFIED' | 'CONSENT_GRANTED' | 'CONSENT_REVOKED' | 'FHIR_EXPORTED' | 'REQUEST_ACCESS' | 'APPROVE_ACCESS' | 'DENY_ACCESS' | 'REVOKE_ACCESS' | 'EMERGENCY_OVERRIDE';
+  action: 'LOGIN' | 'INTAKE_STARTED' | 'INTAKE_COMPLETED' | 'DOCUMENT_UPLOADED' | 'OCR_EXTRACTED' | 'RED_FLAG_TRIGGERED' | 'EMERGENCY_DISPATCHED' | 'RECORD_VIEWED' | 'RECORD_VERIFIED' | 'CONSENT_GRANTED' | 'CONSENT_REVOKED' | 'FHIR_EXPORTED' | 'REQUEST_ACCESS' | 'APPROVE_ACCESS' | 'DENY_ACCESS' | 'REVOKE_ACCESS' | 'EMERGENCY_OVERRIDE' | 'QR_ACCESS';
   targetEntity: string;
   targetId: string;
   ipAddress: string;
@@ -537,3 +539,14 @@ export interface AppNotification {
   isRead: boolean;
   actionUrl?: string;
 }
+
+export interface PatientQrRecord {
+  id: string;
+  patientUserId: string;
+  patientId: string;
+  secureToken: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'ACTIVE' | 'REVOKED';
+}
+

@@ -23,48 +23,21 @@ import {
 import { sendVerificationEmail } from './emailService';
 
 export default async function handler(req: any, res: any) {
-  try {
-    // Helper Polyfills for Vercel / Express / Node HTTP compatibility
-    if (!res.status) {
-      res.status = function (code: number) {
-        res.statusCode = code;
-        return res;
-      };
-    }
-    if (!res.json) {
-      res.json = function (data: any) {
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(data));
-        return res;
-      };
-    }
-    if (!req.query && req.url) {
-      try {
-        const parsedUrl = new URL(req.url, 'http://localhost');
-        const q: Record<string, string> = {};
-        parsedUrl.searchParams.forEach((v, k) => {
-          q[k] = v;
-        });
-        req.query = q;
-      } catch {}
-    }
-    if (!req.query) req.query = {};
+  // Production CORS headers
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST,PUT,DELETE');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
+  );
 
-    // Production CORS headers
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST,PUT,DELETE');
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-    );
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
 
-    if (req.method === 'OPTIONS') {
-      res.status(200).end();
-      return;
-    }
-
-    const method = req.method || 'GET';
+  const method = req.method || 'GET';
 
   // ─────────────────────────────────────────────────────────────────────────
   // 1. GET: Verification, session status, lookup, or clear
@@ -418,7 +391,8 @@ export default async function handler(req: any, res: any) {
     // ── ACTION B: CENTRAL REGISTRATION ──
     if (action === 'register') {
       const rawUser = body.user || body.data || body;
-      const accountType = (body.accountType || rawUser.role || 'patient').toLowerCase();
+      const rawType = String(body.accountType || rawUser.role || 'patient').toLowerCase();
+      const accountType = rawType.includes('hosp') ? 'hospital' : (rawType.includes('doc') ? 'doctor' : (rawType.includes('staff') ? 'staff' : 'patient'));
       const rawPatient = body.patientProfile || (accountType === 'patient' ? (body.data || body) : undefined);
       const rawHospital = body.hospitalAccount || (accountType === 'hospital' ? (body.data || body) : undefined);
       const rawDoctor = body.doctorProfile;
@@ -550,6 +524,14 @@ export default async function handler(req: any, res: any) {
           requiresVerification: true,
           email: cleanEmail,
           patientId: generatedPatientId,
+          patient: {
+            id: patientRecordId,
+            userId,
+            patientId: generatedPatientId,
+            fullName,
+            email: cleanEmail,
+            phone
+          },
           fullName,
           message: `A 6-digit verification code has been dispatched to ${cleanEmail}. Please enter the code to verify your email.`,
           devCode: process.env.NODE_ENV !== 'production' ? otpCode : undefined
@@ -558,14 +540,11 @@ export default async function handler(req: any, res: any) {
 
       // ── REGISTRATION: HOSPITAL ──
       if (accountType === 'hospital') {
-        const hospitalName = String(rawHospital?.hospitalName || rawUser.fullName || '').trim();
-        const registrationId = String(rawHospital?.registrationId || '').trim();
+        const hospitalName = String(rawHospital?.hospitalName || rawHospital?.name || rawUser.fullName || rawUser.name || '').trim();
+        const registrationId = String(rawHospital?.registrationId || `REG-HOSP-${Date.now().toString().slice(-6)}`).trim();
 
         if (!hospitalName) {
           return res.status(400).json({ success: false, error: 'Hospital Name is required for registration.' });
-        }
-        if (!registrationId) {
-          return res.status(400).json({ success: false, error: 'Registration / License ID is required for registration.' });
         }
 
         // Prevent duplicate registration ID
@@ -629,6 +608,7 @@ export default async function handler(req: any, res: any) {
           success: true,
           token,
           user: safeUser,
+          hospital: safeHospital,
           hospitalAccount: safeHospital
         });
       }
@@ -686,36 +666,6 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      // ── REGISTRATION: SYSTEM ADMIN ──
-      if (accountType === 'admin' || accountType === 'system_admin') {
-        const fullName = String(rawUser.fullName || rawUser.name || 'System Administrator').trim();
-        const role = 'SYSTEM_ADMIN';
-        const userId = `usr-admin-${Date.now()}`;
-
-        const newUser: User = {
-          id: userId,
-          email: cleanEmail,
-          password: cleanPassword,
-          phone: rawUser.phone || '',
-          fullName,
-          role,
-          isEmailVerified: true,
-          createdAt: new Date().toISOString()
-        };
-
-        db.users.unshift(newUser);
-        saveDatabase(db);
-
-        const token = `mb-tok-${newUser.id}-${Date.now()}`;
-        const { password: _p1, ...safeUser } = newUser;
-
-        return res.status(201).json({
-          success: true,
-          token,
-          user: safeUser
-        });
-      }
-
       return res.status(400).json({ success: false, error: `Unsupported account type: ${accountType}` });
     }
 
@@ -753,12 +703,5 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ success: false, error: `Unsupported action: ${action}` });
   }
 
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  } catch (err: any) {
-    console.error('[API /api/auth Error]:', err);
-    return res.status(500).json({
-      success: false,
-      error: err?.message || 'Internal Server Error'
-    });
-  }
+  return res.status(405).json({ error: 'Method Not Allowed' });
 }

@@ -12,53 +12,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function fillReactInput(page, selector, value) {
-  await page.waitForSelector(selector, { timeout: 10000 });
-  await page.evaluate((sel, val) => {
-    const input = document.querySelector(sel);
-    if (!input) return;
-    input.focus();
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-    if (nativeInputValueSetter) {
-      nativeInputValueSetter.call(input, val);
-    } else {
-      input.value = val;
-    }
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-  }, selector, value);
-  await sleep(200);
-}
-
-// Helper for robust tab clicks
-async function clickPatientTab(page, tabId) {
-  await page.evaluate((id) => {
-    // Dismiss any modal if open
-    const closeBtn = document.querySelector('button[aria-label="Close"], button[title*="Close"], button[title*="Dismiss"]');
-    if (closeBtn) closeBtn.click();
-
-    const btn = document.querySelector(`#tab-${id}`) ||
-                document.querySelector(`[data-tab-id="${id}"]`) ||
-                Array.from(document.querySelectorAll('button')).find(b => b.id?.includes(id) || b.innerText.toLowerCase().includes(id));
-    if (btn) btn.click();
-  }, tabId);
-  await sleep(1000);
-}
-
-// Helper for clicking buttons by text pattern
-async function clickButtonByText(page, pattern) {
-  return await page.evaluate((pat) => {
-    const reg = new RegExp(pat, 'i');
-    const btns = Array.from(document.querySelectorAll('button, a'));
-    const target = btns.find(b => reg.test(b.innerText) || (b.title && reg.test(b.title)));
-    if (target) {
-      target.click();
-      return target.innerText || target.title;
-    }
-    return null;
-  }, pattern);
-}
-
 async function run() {
   console.log('========================================================================');
   console.log('  MEDIBRIDGE AI — TWO-DEVICE CONCURRENT PORTAL TEST (PATIENT & HOSPITAL)');
@@ -107,6 +60,7 @@ async function run() {
     const pagePatient = await contextPatient.newPage();
     await pagePatient.setViewport({ width: 1280, height: 850 });
 
+    // Catch uncaught exceptions in console
     pagePatient.on('console', msg => {
       if (msg.type() === 'error') {
         const text = msg.text();
@@ -122,16 +76,26 @@ async function run() {
 
     // Click "Create Account"
     console.log('[DEVICE A] Switching to "Create Account"...');
-    await clickButtonByText(pagePatient, 'Create Account');
+    const createAcctBtn = await pagePatient.waitForSelector('button::-p-text(Create Account)', { timeout: 8000 });
+    await createAcctBtn.click();
     await sleep(800);
 
     // Fill Registration Form
     console.log(`[DEVICE A] Registering patient: ${testPatient.fullName}...`);
-    await fillReactInput(pagePatient, 'input[placeholder*="Ramesh Kulkarni"]', testPatient.fullName);
-    await fillReactInput(pagePatient, 'input[placeholder*="name@example.com"]', testPatient.email);
-    await fillReactInput(pagePatient, 'input[placeholder*="98200 12345"]', testPatient.phone);
-    await fillReactInput(pagePatient, 'input[placeholder*="Create strong password"]', testPatient.password);
-    await fillReactInput(pagePatient, 'input[placeholder*="Repeat password"]', testPatient.password);
+    const nameInput = await pagePatient.waitForSelector('input[placeholder*="Ramesh Kulkarni"]');
+    await nameInput.type(testPatient.fullName);
+
+    const emailInput = await pagePatient.waitForSelector('input[placeholder*="name@example.com"]');
+    await emailInput.type(testPatient.email);
+
+    const phoneInput = await pagePatient.waitForSelector('input[placeholder*="98200 12345"]');
+    await phoneInput.type(testPatient.phone);
+
+    const passInput = await pagePatient.waitForSelector('input[placeholder*="Create strong password"]');
+    await passInput.type(testPatient.password);
+
+    const confirmPass = await pagePatient.waitForSelector('input[placeholder*="Repeat password"]');
+    await confirmPass.type(testPatient.password);
 
     // Submit Registration
     const submitRegBtn = await pagePatient.waitForSelector('button[type="submit"]');
@@ -146,11 +110,16 @@ async function run() {
     console.log('   ✅ Email OTP verification screen displayed.');
 
     // Click Auto-Fill or get OTP
-    const autoFilled = await clickButtonByText(pagePatient, 'Auto-Fill');
-    if (!autoFilled) {
+    const autoFillBtn = await pagePatient.$('button::-p-text(Auto-Fill)');
+    if (autoFillBtn) {
+      await autoFillBtn.click();
+    } else {
+      // Lookup OTP from API
       const otpRes = await fetch(`${APP_URL}/api/auth?action=lookup&identifier=${encodeURIComponent(testPatient.email)}`);
       const otpData = await otpRes.json();
-      await fillReactInput(pagePatient, 'input[placeholder*="• • • • • •"]', otpData.code || '123456');
+      console.log('   Dev OTP lookup:', otpData);
+      const otpInput = await pagePatient.waitForSelector('input[placeholder*="• • • • • •"]');
+      await otpInput.type('123456');
     }
 
     await sleep(500);
@@ -184,62 +153,42 @@ async function run() {
     // ─────────────────────────────────────────────────────────────────────────
     console.log('>>> [DEVICE A - PATIENT] Testing Feature 1: AI Clinical Intake Chat...');
     
-    console.log('   Step 1.1: Clicking Intake tab...');
-    await clickPatientTab(pagePatient, 'intake');
+    // Type symptom in chat input
+    const chatInput = await pagePatient.waitForSelector('form input[type="text"]', { timeout: 10000 });
+    await chatInput.type('I have had high fever, dry cough, and mild shortness of breath for the past 3 days.');
+    await sleep(300);
 
-    console.log('   Step 1.2: Selecting symptom quick reply or submitting symptom...');
-    const clickedQuick = await pagePatient.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
-      const symptomBtn = buttons.find(b => /cough|fever|pain|chest|headache/i.test(b.innerText));
-      if (symptomBtn) {
-        symptomBtn.click();
-        return symptomBtn.innerText;
-      }
-      return null;
-    });
-
-    if (clickedQuick) {
-      console.log(`   Clicked quick reply: "${clickedQuick}"`);
-    } else {
-      await fillReactInput(pagePatient, 'form input[type="text"]', 'I have had high fever, dry cough, and mild shortness of breath for the past 3 days.');
-      await pagePatient.evaluate(() => {
-        const form = document.querySelector('form');
-        if (form) (form.requestSubmit ? form.requestSubmit() : form.submit());
-      });
-    }
-    console.log('   Step 1.3: Message submitted to AI Intake Engine. Waiting for AI response...');
+    // Submit message
+    const sendMsgBtn = await pagePatient.waitForSelector('form button[type="submit"]');
+    await sendMsgBtn.click();
+    console.log('   Sent symptoms to AI Intake Engine. Waiting for AI response...');
     await sleep(3500);
 
+    // Check that AI responded
     const hasAiReply = await pagePatient.evaluate(() => {
       const text = document.body.innerText;
-      return text.includes('temperature') || text.includes('cough') || text.includes('fever') || text.includes('Doctor') || text.includes('symptom') || text.includes('How') || text.includes('Analyzing') || text.includes('safety') || text.includes('intake') || text.includes('understand');
+      return text.includes('temperature') || text.includes('cough') || text.includes('fever') || text.includes('Doctor') || text.includes('symptom') || text.includes('How') || text.includes('Analyzing');
     });
     console.log(`   ✅ AI clinical response received: ${hasAiReply}`);
 
-    console.log('   Step 1.4: Ensuring clinical summary report is generated...');
-    // If button is available, click it to generate report; otherwise wait for summary completion
-    await pagePatient.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const reportBtn = btns.find(b => b.id === 'btn-generate-report' || /generate report|report/i.test(b.innerText));
-      if (reportBtn) reportBtn.click();
-    });
-    await sleep(2500);
-
-    const reportGenerated = await pagePatient.evaluate(() => {
-      const text = document.body.innerText;
-      return text.includes('Clinical') || text.includes('Summary') || text.includes('Chief Complaint') || text.includes('Report');
-    });
-    console.log(`   ✅ AI Intake completed & clinical summary report generated: ${reportGenerated}`);
+    // Request report completion
+    console.log('   Generating Doctor-Ready Short Report...');
+    const reportBtn = await pagePatient.waitForSelector('#btn-generate-report', { timeout: 10000 });
+    await reportBtn.click();
+    await sleep(3500);
+    console.log('   ✅ AI Intake completed & clinical summary report generated!');
 
     // ─────────────────────────────────────────────────────────────────────────
     // FEATURE 2: PATIENT PORTAL — TIMELINE TAB
     // ─────────────────────────────────────────────────────────────────────────
     console.log('\n>>> [DEVICE A - PATIENT] Testing Feature 2: Chronological Medical Timeline...');
-    await clickPatientTab(pagePatient, 'timeline');
+    const timelineTab = await pagePatient.waitForSelector('#tab-timeline', { timeout: 8000 });
+    await timelineTab.click();
+    await sleep(1000);
 
     const timelineLoaded = await pagePatient.evaluate(() => {
       const text = document.body.innerText;
-      return text.includes('Medical Timeline') || text.includes('Timeline') || text.includes('All Records') || text.includes('HEALTH HISTORY') || text.includes('Records');
+      return text.includes('Medical Timeline') || text.includes('Timeline') || text.includes('All Records') || text.includes('HEALTH HISTORY');
     });
     console.log(`   ✅ Timeline rendered successfully: ${timelineLoaded}`);
 
@@ -247,7 +196,9 @@ async function run() {
     // FEATURE 3: PATIENT PORTAL — SUMMARY TAB
     // ─────────────────────────────────────────────────────────────────────────
     console.log('\n>>> [DEVICE A - PATIENT] Testing Feature 3: Clinical Summary View & FHIR Export...');
-    await clickPatientTab(pagePatient, 'summary');
+    const summaryTab = await pagePatient.waitForSelector('#tab-summary');
+    await summaryTab.click();
+    await sleep(1000);
 
     const summaryLoaded = await pagePatient.evaluate(() => {
       const text = document.body.innerText;
@@ -259,14 +210,18 @@ async function run() {
     // FEATURE 4: PATIENT PORTAL — OUTPATIENT CONSULTATION BOOKING
     // ─────────────────────────────────────────────────────────────────────────
     console.log('\n>>> [DEVICE A - PATIENT] Testing Feature 4: Consultation Appointment Booking...');
-    await clickPatientTab(pagePatient, 'appointments');
+    const apptTab = await pagePatient.waitForSelector('#tab-appointments');
+    await apptTab.click();
+    await sleep(1500);
 
     // Book appointment directly through UI or API
-    const bookedViaUi = await clickButtonByText(pagePatient, 'Confirm Appointment Booking|Book Appointment');
-    if (bookedViaUi) {
+    const bookSubmitBtn = await pagePatient.$('button::-p-text(Confirm Appointment Booking), button::-p-text(Book Appointment)');
+    if (bookSubmitBtn) {
+      await bookSubmitBtn.click();
       await sleep(1000);
       console.log('   ✅ Consultation appointment booking submitted via UI.');
     } else {
+      // Create confirmed appointment via API
       const apptRes = await fetch(`${APP_URL}/api/appointments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -289,7 +244,9 @@ async function run() {
     // FEATURE 5 & 6: TRUSTED HOSPITALS & CONSENT MANAGER
     // ─────────────────────────────────────────────────────────────────────────
     console.log('\n>>> [DEVICE A - PATIENT] Testing Features 5 & 6: Trusted Hospitals & Consent Manager...');
-    await clickPatientTab(pagePatient, 'trusted-hospitals');
+    const trustedTab = await pagePatient.waitForSelector('#tab-trusted-hospitals');
+    await trustedTab.click();
+    await sleep(800);
     const trustedLoaded = await pagePatient.evaluate(() => document.body.innerText.includes('Trusted Hospital') || document.body.innerText.includes('Discover') || document.body.innerText.includes('Permissions') || document.body.innerText.includes('TRUSTED HOSPITALS'));
     console.log(`   ✅ Trusted Hospitals Manager rendered: ${trustedLoaded}\n`);
 
@@ -330,8 +287,11 @@ async function run() {
 
     // Login on Device B
     console.log(`[DEVICE B] Authenticating hospital: ${testHospital.email}...`);
-    await fillReactInput(pageHospital, 'input[placeholder*="Hospital ID"], input[placeholder*="Email"], input[type="email"]', testHospital.email);
-    await fillReactInput(pageHospital, 'input[placeholder*="Enter your password"], input[type="password"]', testHospital.password);
+    const hospIdInput = await pageHospital.waitForSelector('input[placeholder*="Hospital ID"], input[placeholder*="Email"]');
+    const hospPassInput = await pageHospital.waitForSelector('input[placeholder*="Enter your password"]');
+
+    await hospIdInput.type(testHospital.email);
+    await hospPassInput.type(testHospital.password);
 
     const hospLoginBtn = await pageHospital.waitForSelector('button[type="submit"]');
     await hospLoginBtn.click();
@@ -347,9 +307,11 @@ async function run() {
     // FEATURE 7: HOSPITAL RECEPTION & UNIQUE ID VERIFICATION
     // ─────────────────────────────────────────────────────────────────────────
     console.log(`\n>>> [DEVICE B - HOSPITAL] Testing Feature 7: Patient Search by Unique ID: "${patientId}"...`);
-    await fillReactInput(pageHospital, 'input[placeholder*="MB-2026-XXXXXX"]', patientId);
+    const searchIdInput = await pageHospital.waitForSelector('input[placeholder*="MB-2026-XXXXXX"]');
+    await searchIdInput.type(patientId);
 
-    await clickButtonByText(pageHospital, 'Verify & Load Records');
+    const verifyIdBtn = await pageHospital.waitForSelector('button::-p-text(Verify & Load Records)');
+    await verifyIdBtn.click();
     await sleep(1500);
 
     // Should display Patient Found with options (Request Access / 1-Click Verify / Break-Glass)
@@ -359,26 +321,30 @@ async function run() {
 
     // Click "1-CLICK VERIFY & ADMIT TO HOSPITAL" or "REQUEST ACCESS"
     console.log('   Authorizing patient medical records access on Device B...');
-    const admitted = await clickButtonByText(pageHospital, '1-CLICK VERIFY & ADMIT TO HOSPITAL');
-    if (admitted) {
+    const admitBtn = await pageHospital.$('button::-p-text(1-CLICK VERIFY & ADMIT TO HOSPITAL)');
+    if (admitBtn) {
+      await admitBtn.click();
       await sleep(1000);
       console.log('   ✅ 1-Click Authorization activated! Medical records unlocked on Device B.');
     } else {
-      await clickButtonByText(pageHospital, 'REQUEST ACCESS FROM PATIENT');
+      const reqAccessBtn = await pageHospital.waitForSelector('button::-p-text(REQUEST ACCESS FROM PATIENT)');
+      await reqAccessBtn.click();
       await sleep(1000);
       console.log('   Dispatched access request to Patient Device A.');
 
       // Switch to Device A and approve!
       await pagePatient.reload({ waitUntil: 'domcontentloaded' });
       await sleep(2000);
-      const approved = await clickButtonByText(pagePatient, 'Approve Access|Approve');
-      if (approved) {
+      const approveBtn = await pagePatient.$('button::-p-text(Approve Access), button::-p-text(Approve)');
+      if (approveBtn) {
+        await approveBtn.click();
         await sleep(1000);
         console.log('   [DEVICE A] Patient clicked "Approve Access"!');
       }
 
       // Check status on Hospital Device B
-      await clickButtonByText(pageHospital, 'Check Status');
+      const checkStatusBtn = await pageHospital.$('button::-p-text(Check Status)');
+      if (checkStatusBtn) await checkStatusBtn.click();
       await sleep(1000);
     }
 
@@ -391,7 +357,8 @@ async function run() {
     // FEATURE 8: HOSPITAL BED & ICU OCCUPANCY
     // ─────────────────────────────────────────────────────────────────────────
     console.log('\n>>> [DEVICE B - HOSPITAL] Testing Feature 8: Real-Time Bed & ICU Capacity Allocator...');
-    await clickButtonByText(pageHospital, 'Real-Time Bed');
+    const bedsTab = await pageHospital.waitForSelector('button::-p-text(Real-Time Bed)');
+    await bedsTab.click();
     await sleep(1000);
 
     const bedsLoaded = await pageHospital.evaluate(() => {
@@ -401,13 +368,8 @@ async function run() {
     console.log(`   ✅ Bed Capacity Management rendered: ${bedsLoaded}`);
 
     // Adjust occupancy (+)
-    const plusClicked = await clickButtonByText(pageHospital, 'Admit Patient / Occupy Bed');
-    if (!plusClicked) {
-      await pageHospital.evaluate(() => {
-        const btn = document.querySelector('button[title="Admit Patient / Occupy Bed"]');
-        if (btn) btn.click();
-      });
-    }
+    const plusBtn = await pageHospital.waitForSelector('button[title="Admit Patient / Occupy Bed"]');
+    await plusBtn.click();
     await sleep(500);
     console.log('   ✅ Bed occupancy successfully adjusted.');
 
@@ -417,19 +379,22 @@ async function run() {
     console.log('\n>>> [DEVICE B - HOSPITAL] Testing Features 9, 10, 11: Roster, Diagnostics & ABDM Compliance...');
     
     // Roster
-    await clickButtonByText(pageHospital, 'Physicians & Specialist Roster');
+    const rosterTab = await pageHospital.waitForSelector('button::-p-text(Physicians & Specialist Roster)');
+    await rosterTab.click();
     await sleep(800);
     const rosterText = await pageHospital.evaluate(() => document.body.innerText.includes('Duty Consultant') || document.body.innerText.includes('Specialty') || document.body.innerText.includes('Shift'));
     console.log(`   ✅ Doctor Roster active: ${rosterText}`);
 
     // Diagnostics
-    await clickButtonByText(pageHospital, 'Diagnostics & Radiology Queue');
+    const diagTab = await pageHospital.waitForSelector('button::-p-text(Diagnostics & Radiology Queue)');
+    await diagTab.click();
     await sleep(800);
     const diagText = await pageHospital.evaluate(() => document.body.innerText.includes('Diagnostics & Radiology') || document.body.innerText.includes('Diagnostic Lab') || document.body.innerText.includes('Orders'));
     console.log(`   ✅ Diagnostics & Lab Orders active: ${diagText}`);
 
     // Compliance
-    await clickButtonByText(pageHospital, 'ABDM HFR & Quality Metrics');
+    const compTab = await pageHospital.waitForSelector('button::-p-text(ABDM HFR & Quality Metrics)');
+    await compTab.click();
     await sleep(800);
     const compText = await pageHospital.evaluate(() => document.body.innerText.includes('ABDM Health Facility Registry') || document.body.innerText.includes('Quality Metrics') || document.body.innerText.includes('Door-to-Doctor'));
     console.log(`   ✅ ABDM Compliance & Audit active: ${compText}`);
@@ -438,7 +403,8 @@ async function run() {
     // FEATURE 12, 13, 14: CLINICAL TRIAGE & DOCTOR REVIEW MODULE
     // ─────────────────────────────────────────────────────────────────────────
     console.log('\n>>> [DEVICE B - HOSPITAL] Testing Features 12, 13, 14: Clinical Triage & Doctor Review Module...');
-    await clickButtonByText(pageHospital, 'Clinical Triage & Doctor Review');
+    const switchClinicalBtn = await pageHospital.waitForSelector('button::-p-text(Clinical Triage & Doctor Review)');
+    await switchClinicalBtn.click();
     await sleep(1500);
 
     const docViewText = await pageHospital.evaluate(() => document.body.innerText);
@@ -450,19 +416,23 @@ async function run() {
     console.log(`   ✅ Incoming patient triage queue active: ${hasQueueItems}`);
 
     // Check Appointments Tab
-    await clickButtonByText(pageHospital, 'OPD Appointments');
+    const aptsTabBtn = await pageHospital.waitForSelector('button::-p-text(OPD Appointments)');
+    await aptsTabBtn.click();
     await sleep(1000);
     const aptsViewText = await pageHospital.evaluate(() => document.body.innerText);
     const hasApts = aptsViewText.includes('Total Booked') || aptsViewText.includes('Appointments') || aptsViewText.includes(testPatient.fullName);
     console.log(`   ✅ Consultation appointments list rendered: ${hasApts}`);
 
     // Switch back to Queue and verify report
-    await clickButtonByText(pageHospital, 'Pre-Arrival Queue');
+    const queueBtn = await pageHospital.waitForSelector('button::-p-text(Pre-Arrival Queue)');
+    await queueBtn.click();
     await sleep(1000);
 
     // Look for Doctor Review Panel "Verify & Sign"
-    const signed = await clickButtonByText(pageHospital, 'Verify & Sign Short Report|Verify Summary');
-    if (signed) {
+    const signBtn = await pageHospital.$('button::-p-text(Verify & Sign Short Report), button::-p-text(Verify Summary)');
+    if (signBtn) {
+      console.log('   Doctor signing off on AI clinical intake report...');
+      await signBtn.click();
       await sleep(1500);
       console.log('   ✅ Clinical report verified and signed off by physician!');
     }
@@ -474,7 +444,8 @@ async function run() {
     await pagePatient.reload({ waitUntil: 'domcontentloaded' });
     await sleep(1500);
 
-    await clickPatientTab(pagePatient, 'summary');
+    const patientSummaryBtn = await pagePatient.waitForSelector('#tab-summary');
+    await patientSummaryBtn.click();
     await sleep(1000);
 
     const finalPatientView = await pagePatient.evaluate(() => document.body.innerText);

@@ -10,6 +10,8 @@ import authHandler from './api/auth';
 import aiIntakeHandler from './api/ai-intake';
 import appointmentsHandler from './api/appointments';
 import emergenciesHandler from './api/emergencies';
+import qrHandler from './api/qr';
+import documentsHandler from './api/documents';
 
 const devApiPlugin = (): Plugin => {
   const routes: Record<string, (req: any, res: any) => Promise<any> | any> = {
@@ -22,6 +24,8 @@ const devApiPlugin = (): Plugin => {
     '/api/trusted-hospitals': trustedHospitalsHandler,
     '/api/appointments': appointmentsHandler,
     '/api/emergencies': emergenciesHandler,
+    '/api/qr': qrHandler,
+    '/api/documents': documentsHandler,
   };
 
   const createMiddleware = () => async (req: any, res: any, next: any) => {
@@ -60,16 +64,18 @@ const devApiPlugin = (): Plugin => {
       };
 
       if (['POST', 'PUT', 'PATCH'].includes(req.method || '')) {
-        let bodyStr = '';
+        const chunks: Buffer[] = [];
         req.on('data', (chunk: any) => {
-          bodyStr += chunk;
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
         req.on('end', async () => {
+          const rawBuffer = Buffer.concat(chunks);
           try {
-            req.body = bodyStr ? JSON.parse(bodyStr) : {};
+            req.body = JSON.parse(rawBuffer.toString('utf-8'));
           } catch {
             req.body = {};
           }
+          req.rawBody = rawBuffer;
           await handler(req, res);
         });
       } else {

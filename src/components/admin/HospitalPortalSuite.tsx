@@ -5,15 +5,17 @@ import {
   Siren, Clock, Sparkles, HeartPulse, Stethoscope, ChevronRight,
   Plus, RefreshCw, Send, Check, Eye, Filter, ArrowUpRight,
   SlidersHorizontal, Download, FileSpreadsheet, Zap, Radio,
-  Shield, CheckCheck, Trash2, Edit3, XCircle, Lock, ShieldAlert
+  Shield, CheckCheck, Trash2, Edit3, XCircle, Lock, ShieldAlert, QrCode
 } from 'lucide-react';
+
 import { db } from '../../services/mockDatabase';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { cloudDataService, syncRelay } from '../../services/firebaseService';
 import { cloudDb } from '../../services/cloudDatabaseEngine';
 import { PatientProfile, ClinicalSession, MedicalDocument, Hospital, AccessRequest } from '../../types';
-import { ClinicalSummaryModal } from '../common/ClinicalSummaryModal';
+import { PatientQrScanner } from '../doctor/PatientQrScanner';
+import { Modal } from '../common/Modal';
 import { DocumentViewerModal } from '../common/DocumentViewerModal';
 
 interface BedCategory {
@@ -62,6 +64,7 @@ export const HospitalPortalSuite: React.FC = () => {
   // 1. RECEPTION & UNIQUE ID VERIFICATION STATE
   // ==========================================
   const [patientIdInput, setPatientIdInput] = useState('');
+  const [intakeLookupMode, setIntakeLookupMode] = useState<'ID' | 'QR'>('ID');
   const [verifiedPatient, setVerifiedPatient] = useState<{
     status: 'AUTHORIZED' | 'UNAUTHORIZED' | 'NOT_FOUND' | 'REQUEST_PENDING' | 'DENIED' | 'REVOKED';
     profile?: PatientProfile;
@@ -75,8 +78,8 @@ export const HospitalPortalSuite: React.FC = () => {
   const [isVerifying, setIsVerifying] = useState(false);
   const [admissionType, setAdmissionType] = useState<'OPD' | 'EMERGENCY' | 'ICU' | 'DAYCARE'>('EMERGENCY');
   const [admissionDept, setAdmissionDept] = useState('Emergency Medicine / Trauma');
-  const [selectedSummarySession, setSelectedSummarySession] = useState<ClinicalSession | null>(null);
-  const [selectedViewDoc, setSelectedViewDoc] = useState<MedicalDocument | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<MedicalDocument | null>(null);
+  const [viewingSession, setViewingSession] = useState<ClinicalSession | null>(null);
 
   const currentHospitalId = hospitalAccount?.id || currentUser?.id || '';
   const currentHospitalName = hospitalAccount?.hospitalName || currentUser?.fullName || 'Hospital Facility';
@@ -129,17 +132,43 @@ export const HospitalPortalSuite: React.FC = () => {
     const authCheck = await cloudDataService.checkHospitalAccess(currentHospitalId, patient.patientId);
     const isAuthorized = forceBreakGlass || authCheck.isAuthorized || db.isHospitalAuthorizedForPatient(currentHospitalId, patient.patientId);
 
-    // Retrieve full clinical records from database (hydrating cross-device from cloud if needed)
-    let sessions = db.getClinicalSessionsForPatient(patient.patientId);
-    if (sessions.length === 0) {
-      sessions = await cloudDb.getClinicalSessions(patient.patientId);
-      sessions.forEach(s => db.saveClinicalSession(s));
+    // Retrieve authoritative clinical records directly from central backend API
+    let centralSessions: ClinicalSession[] = [];
+    let centralDocs: MedicalDocument[] = [];
+    try {
+      const res = await fetch(`/api/patients?patientId=${encodeURIComponent(patient.patientId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.sessions && Array.isArray(json.sessions)) {
+          centralSessions = json.sessions;
+          json.sessions.forEach((s: ClinicalSession) => db.saveClinicalSession(s));
+        }
+        if (json?.documents && Array.isArray(json.documents)) {
+          centralDocs = json.documents;
+          json.documents.forEach((d: MedicalDocument) => db.addDocument(d));
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Central API fetch fallback in handleVerifyPatient:', apiErr);
     }
-    let documents = db.getDocuments(patient.patientId);
-    if (documents.length === 0) {
-      documents = await cloudDb.getDocuments(patient.patientId);
-      documents.forEach(d => db.addDocument(d));
-    }
+
+    const localSessions = db.getClinicalSessionsForPatient(patient.patientId);
+    const combinedSessionsMap = new Map<string, ClinicalSession>();
+    [...centralSessions, ...localSessions].forEach(s => {
+      if (s && s.id) combinedSessionsMap.set(s.id, s);
+    });
+    const sessions = Array.from(combinedSessionsMap.values()).sort(
+      (a, b) => new Date(b.startedAt || b.completedAt || 0).getTime() - new Date(a.startedAt || a.completedAt || 0).getTime()
+    );
+
+    const localDocs = db.getDocuments(patient.patientId);
+    const combinedDocsMap = new Map<string, MedicalDocument>();
+    [...centralDocs, ...localDocs].forEach(d => {
+      if (d && d.id) combinedDocsMap.set(d.id, d);
+    });
+    const documents = Array.from(combinedDocsMap.values()).sort(
+      (a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime()
+    );
     const consents = db.getConsents(patient.id);
 
     if (isAuthorized) {
@@ -541,7 +570,48 @@ export const HospitalPortalSuite: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 max-w-2xl">
+            {/* Mode Switcher: Search by Patient ID vs Scan Patient QR */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIntakeLookupMode('ID')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  intakeLookupMode === 'ID'
+                    ? 'bg-teal-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900 bg-slate-100'
+                }`}
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Search by Patient ID</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIntakeLookupMode('QR')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  intakeLookupMode === 'QR'
+                    ? 'bg-teal-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900 bg-slate-100'
+                }`}
+              >
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Scan Patient QR</span>
+              </button>
+            </div>
+
+            {intakeLookupMode === 'QR' ? (
+              <div className="pt-2">
+                <PatientQrScanner
+                  onPatientLoaded={(patient) => {
+                    setPatientIdInput(patient.patientId);
+                    handleVerifyPatient(patient.patientId);
+                    setIntakeLookupMode('ID');
+                  }}
+                />
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col sm:flex-row gap-3 max-w-2xl">
               <input
                 type="text"
                 value={patientIdInput}
@@ -592,6 +662,8 @@ export const HospitalPortalSuite: React.FC = () => {
               <div className="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 p-2.5 rounded-xl">
                 ℹ️ No registered patients found yet. Register an account in the Patient Portal to verify records here.
               </div>
+            )}
+              </>
             )}
           </div>
 
@@ -935,96 +1007,77 @@ export const HospitalPortalSuite: React.FC = () => {
                 </div>
               </div>
 
-              {/* AI Intake Clinical Summaries */}
+              {/* Complete AI Clinical Intake Report History */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h5 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-teal-600" />
-                    <span>AI Intake Clinical Summaries ({verifiedPatient.sessions?.length || 0})</span>
+                    <span>Complete Clinical Report History ({verifiedPatient.sessions?.length || 0})</span>
                   </h5>
-                  <span className="text-[10px] text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full font-bold">
-                    Physician Review Required
-                  </span>
+                  <span className="text-[11px] text-slate-500 font-mono">Central Database Verified</span>
                 </div>
 
                 {(!verifiedPatient.sessions || verifiedPatient.sessions.length === 0) ? (
-                  <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500 font-medium">
-                    No AI Intake Clinical Summaries available for this patient.
+                  <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
+                    No clinical intake reports or emergency sessions recorded for this patient yet.
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {verifiedPatient.sessions.map((ses, idx) => (
-                      <div key={ses.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3 hover:border-teal-300 transition shadow-sm">
-                        <div className="flex items-start justify-between flex-wrap gap-2">
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-black text-xs text-slate-900">
-                                Summary #{verifiedPatient.sessions!.length - idx}
+                    {verifiedPatient.sessions.map(ses => (
+                      <div key={ses.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3 hover:border-slate-300 transition shadow-sm">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                              ses.triagePriority === 'RED' ? 'bg-red-100 text-red-800 border-red-300' :
+                              ses.triagePriority === 'ORANGE' ? 'bg-amber-100 text-amber-800 border-amber-300' :
+                              'bg-teal-100 text-teal-800 border-teal-300'
+                            }`}>
+                              Priority: {ses.triagePriority}
+                            </span>
+                            {ses.isRedFlagTriggered && (
+                              <span className="text-[10px] bg-red-600 text-white font-bold px-2 py-0.5 rounded flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3" /> Critical Red Flag
                               </span>
-                              <span className="font-mono text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded font-bold">
-                                {ses.patientId}
-                              </span>
-                              <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full font-bold">
-                                Status: Available
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 flex items-center gap-1">
-                              <Clock className="w-3 h-3 text-slate-400" />
-                              Generated: {new Date(ses.startedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                            </p>
+                            )}
+                            <span className="text-[10px] bg-slate-200 text-slate-700 font-mono px-2 py-0.5 rounded">
+                              ID: {ses.id}
+                            </span>
                           </div>
-
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedSummarySession(ses);
-                                db.logAction(
-                                  currentUser?.id || 'hosp-admin',
-                                  currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Staff',
-                                  'HOSPITAL_ADMIN',
-                                  'RECORD_VIEWED',
-                                  'ClinicalSummary',
-                                  ses.id,
-                                  `Hospital viewed AI Clinical Summary for Patient ID: ${ses.patientId}`
-                                );
-                              }}
-                              className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>View Summary</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedSummarySession(ses);
-                                db.logAction(
-                                  currentUser?.id || 'hosp-admin',
-                                  currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Staff',
-                                  'HOSPITAL_ADMIN',
-                                  'RECORD_VIEWED',
-                                  'ClinicalSummary',
-                                  ses.id,
-                                  `Hospital downloaded PDF for AI Clinical Summary for Patient ID: ${ses.patientId}`
-                                );
-                              }}
-                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <Download className="w-3.5 h-3.5 text-teal-700" />
-                              <span>Download PDF</span>
-                            </button>
-                          </div>
+                          <span className="text-xs text-slate-500 font-mono">
+                            {new Date(ses.startedAt || ses.completedAt || Date.now()).toLocaleString()}
+                          </span>
                         </div>
 
-                        <div className="text-xs bg-white p-3 rounded-xl border border-slate-200 space-y-1">
-                          <p className="font-bold text-slate-900">
-                            Chief Complaint: <span className="text-teal-900 font-medium">{ses.chiefComplaint}</span>
+                        <div>
+                          <p className="text-xs text-slate-800 font-medium">
+                            <strong className="text-slate-900">Chief Complaint:</strong> {ses.chiefComplaint}
                           </p>
-                          {ses.aiSummary?.historyOfPresentIllness && (
-                            <p className="text-[11px] text-slate-600 line-clamp-2 leading-relaxed">
-                              {ses.aiSummary.historyOfPresentIllness}
+                          {ses.aiSummary?.suspectedSystemicInvolvement && ses.aiSummary.suspectedSystemicInvolvement.length > 0 && (
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              <strong>Clinical Department:</strong> {ses.aiSummary.suspectedSystemicInvolvement.join(', ')}
                             </p>
                           )}
+                        </div>
+
+                        {ses.aiSummary && (
+                          <div className="text-[11px] text-slate-600 bg-white p-3 rounded-xl border border-slate-200 space-y-1">
+                            <p className="font-semibold text-teal-800">History of Present Illness (HPI):</p>
+                            <p className="whitespace-pre-line leading-relaxed">{ses.aiSummary.historyOfPresentIllness}</p>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
+                          <span className="text-[11px] text-slate-500">
+                            Status: <strong className="text-teal-700">{ses.status || 'COMPLETED'}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setViewingSession(ses)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 transition cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View Full Clinical Report</span>
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1032,82 +1085,66 @@ export const HospitalPortalSuite: React.FC = () => {
                 )}
               </div>
 
-              {/* Patient Uploaded Medical Reports */}
+              {/* Uploaded Reports & Actual Documents */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h5 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                     <FileText className="w-4 h-4 text-blue-600" />
-                    <span>Patient Uploaded Medical Reports ({verifiedPatient.documents?.length || 0})</span>
+                    <span>Uploaded Medical Documents ({verifiedPatient.documents?.length || 0})</span>
                   </h5>
-                  <span className="text-[10px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full font-bold">
-                    Secure ABDM Storage
-                  </span>
+                  <span className="text-[11px] text-slate-500 font-mono">Central File Storage</span>
                 </div>
 
                 {(!verifiedPatient.documents || verifiedPatient.documents.length === 0) ? (
-                  <div className="p-5 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500 font-medium">
-                    No medical reports uploaded by this patient.
+                  <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
+                    No medical documents uploaded yet by this patient.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                     {verifiedPatient.documents.map(d => (
-                      <div key={d.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 hover:border-blue-300 transition shadow-sm flex flex-col justify-between">
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
-                            <span className="font-black text-blue-700 uppercase bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                      <div key={d.id} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col justify-between hover:border-slate-300 hover:shadow-sm transition">
+                        <div>
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+                            <span className="font-bold uppercase tracking-wider bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded">
                               {d.fileType.replace(/_/g, ' ')}
                             </span>
-                            <span className="font-medium text-slate-500">
-                              {new Date(d.uploadDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                            </span>
+                            <span className="font-mono">{new Date(d.uploadDate).toLocaleDateString()}</span>
                           </div>
-                          <h6 className="font-bold text-xs text-slate-900 line-clamp-1 pt-1" title={d.fileName}>
-                            {d.fileName}
-                          </h6>
-                          <p className="text-[10px] text-slate-500">
-                            {d.extractedData?.facilityName || 'Diagnostic Report'} • {d.fileSize || '1.2 MB'}
+                          <h6 className="font-bold text-xs text-slate-900 line-clamp-1 mt-1">{d.fileName}</h6>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            {d.extractedData?.facilityName || 'Diagnostic Facility'} • {d.extractedData?.physicianName || 'Physician'}
                           </p>
+                          {d.extractedData?.extractedDiagnoses && d.extractedData.extractedDiagnoses.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {d.extractedData.extractedDiagnoses.slice(0, 3).map((diag, i) => (
+                                <span key={i} className="text-[9px] bg-white text-slate-700 border border-slate-200 px-1.5 py-0.5 rounded">
+                                  {diag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
-                        <div className="pt-2 border-t border-slate-200/80 flex items-center gap-2">
+                        <div className="pt-3 mt-3 border-t border-slate-200 flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() => {
-                              setSelectedViewDoc(d);
-                              db.logAction(
-                                currentUser?.id || 'hosp-admin',
-                                currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Staff',
-                                'HOSPITAL_ADMIN',
-                                'RECORD_VIEWED',
-                                'MedicalDocument',
-                                d.id,
-                                `Hospital opened medical document "${d.fileName}" for Patient ID: ${d.patientId}`
-                              );
-                            }}
-                            className="flex-1 py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm transition flex items-center justify-center gap-1 cursor-pointer"
+                            onClick={() => setViewingDoc(d)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-teal-600 hover:bg-teal-700 text-white transition shadow-sm cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
-                            <span>View Document</span>
+                            <span>View</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedViewDoc(d);
-                              db.logAction(
-                                currentUser?.id || 'hosp-admin',
-                                currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Staff',
-                                'HOSPITAL_ADMIN',
-                                'RECORD_VIEWED',
-                                'MedicalDocument',
-                                d.id,
-                                `Hospital downloaded medical document "${d.fileName}" for Patient ID: ${d.patientId}`
-                              );
-                            }}
-                            className="p-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-xl transition cursor-pointer"
-                            title="Download Document"
+
+                          <a
+                            href={d.downloadUrl || `/api/documents?id=${d.id}&download=true`}
+                            download={d.fileName}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-white hover:bg-slate-100 text-slate-700 transition border border-slate-300 cursor-pointer"
                           >
-                            <Download className="w-3.5 h-3.5 text-blue-700" />
-                          </button>
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Download</span>
+                          </a>
                         </div>
                       </div>
                     ))}
@@ -1423,30 +1460,111 @@ export const HospitalPortalSuite: React.FC = () => {
         </div>
       )}
 
-      {/* Modals for Clinical Summaries and Documents */}
-      {selectedSummarySession && (
-        <ClinicalSummaryModal
-          isOpen={!!selectedSummarySession}
-          session={selectedSummarySession}
-          patient={verifiedPatient?.profile}
-          onClose={() => setSelectedSummarySession(null)}
-          hospitalName={hospitalAccount?.hospitalName || currentHospitalName}
-          doctorName={currentUser?.fullName}
-          isAuthorized={verifiedPatient?.status === 'AUTHORIZED'}
-        />
-      )}
+      {/* Actual Document Preview & Download Modal */}
+      <DocumentViewerModal
+        isOpen={!!viewingDoc}
+        document={viewingDoc}
+        onClose={() => setViewingDoc(null)}
+      />
 
-      {selectedViewDoc && (
-        <DocumentViewerModal
-          isOpen={!!selectedViewDoc}
-          document={selectedViewDoc}
-          patientId={verifiedPatient?.profile?.patientId}
-          patientName={verifiedPatient?.profile?.fullName}
-          onClose={() => setSelectedViewDoc(null)}
-          hospitalName={hospitalAccount?.hospitalName || currentHospitalName}
-          doctorName={currentUser?.fullName}
-          isAuthorized={verifiedPatient?.status === 'AUTHORIZED'}
-        />
+      {/* Complete Clinical Report History Dossier Modal */}
+      {viewingSession && (
+        <Modal
+          isOpen={!!viewingSession}
+          onClose={() => setViewingSession(null)}
+          title={`Clinical Report Dossier: ${viewingSession.patientId}`}
+          subtitle={`Encounter ${viewingSession.id} • Recorded ${new Date(viewingSession.startedAt || viewingSession.completedAt || Date.now()).toLocaleString()}`}
+          maxWidth="4xl"
+        >
+          <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Patient Name &amp; ID</span>
+                <h4 className="text-sm font-extrabold text-slate-900">{viewingSession.patientName} ({viewingSession.patientId})</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Age: {viewingSession.patientAge || '—'} • Gender: {viewingSession.patientGender || '—'} • Phone: {viewingSession.patientPhone || '—'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-black uppercase px-3 py-1 rounded-full border ${
+                  viewingSession.triagePriority === 'RED' ? 'bg-red-100 text-red-800 border-red-300' :
+                  viewingSession.triagePriority === 'ORANGE' ? 'bg-amber-100 text-amber-800 border-amber-300' :
+                  'bg-teal-100 text-teal-800 border-teal-300'
+                }`}>
+                  Triage Priority: {viewingSession.triagePriority}
+                </span>
+              </div>
+            </div>
+
+            {viewingSession.redFlagsDetected && viewingSession.redFlagsDetected.length > 0 && (
+              <div className="p-3 bg-red-50 border border-red-300 rounded-xl space-y-1">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-red-900">
+                  <AlertTriangle className="w-4 h-4 text-red-600" />
+                  <span>Critical Red Flags Triggered</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {viewingSession.redFlagsDetected.map((rf, i) => (
+                    <span key={i} className="text-xs bg-white text-red-800 border border-red-200 px-2 py-0.5 rounded font-semibold">
+                      ⚠️ {rf}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-2">
+              <h5 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Chief Complaint</h5>
+              <p className="text-sm font-bold text-slate-900">{viewingSession.chiefComplaint}</p>
+              {viewingSession.triageRationale && (
+                <p className="text-xs text-slate-500 italic">Rationale: {viewingSession.triageRationale}</p>
+              )}
+            </div>
+
+            {viewingSession.aiSummary && (
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-2">
+                <h5 className="text-xs font-bold text-teal-800 uppercase tracking-wider">History of Present Illness (HPI)</h5>
+                <p className="text-xs text-slate-700 whitespace-pre-line leading-relaxed">
+                  {viewingSession.aiSummary.historyOfPresentIllness || 'None recorded.'}
+                </p>
+              </div>
+            )}
+
+            {viewingSession.aiSummary?.symptomsList && viewingSession.aiSummary.symptomsList.length > 0 && (
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-2">
+                <h5 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Reported Symptoms</h5>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {viewingSession.aiSummary.symptomsList.map((sym, i) => (
+                    <div key={i} className="p-2 bg-slate-50 rounded-xl text-xs flex justify-between items-center border border-slate-200">
+                      <span className="font-semibold text-slate-800">{sym.name}</span>
+                      <span className="text-[11px] text-slate-500">{sym.duration} • Severity {sym.severity}/10</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {viewingSession.aiSummary?.differentialConsiderations && viewingSession.aiSummary.differentialConsiderations.length > 0 && (
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-2">
+                <h5 className="text-xs font-bold text-purple-800 uppercase tracking-wider">Differential Considerations</h5>
+                <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
+                  {viewingSession.aiSummary.differentialConsiderations.map((diff, i) => (
+                    <li key={i}>{diff}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingSession(null)}
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition border border-slate-300"
+              >
+                Close Report
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

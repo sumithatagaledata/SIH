@@ -4,20 +4,21 @@ import {
   CheckCircle2, Activity, Filter, Search, Siren, KeyRound,
   FileText, ArrowRight, Lock, AlertCircle, ShieldAlert,
   Phone, User, Calendar, FileSpreadsheet, Eye, Pill, Tag,
-  Check, XCircle, Sparkles, MapPin, HeartPulse, Building2, Download
+  Check, XCircle, Sparkles, MapPin, HeartPulse, Building2, QrCode, Download
 } from 'lucide-react';
+
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { PreArrivalQueue } from '../../components/doctor/PreArrivalQueue';
 import { ClinicalReviewPanel } from '../../components/doctor/ClinicalReviewPanel';
 import { SharedPatientsPanel } from '../../components/doctor/SharedPatientsPanel';
+import { PatientQrScanner } from '../../components/doctor/PatientQrScanner';
 import { db } from '../../services/mockDatabase';
 import { cloudDataService } from '../../services/firebaseService';
 import { cloudDb } from '../../services/cloudDatabaseEngine';
 import { ClinicalSession, PatientProfile, MedicalDocument, TimelineEvent, Appointment } from '../../types';
 import { Modal } from '../../components/common/Modal';
 import { DocumentViewerModal } from '../../components/common/DocumentViewerModal';
-import { ClinicalSummaryModal } from '../../components/common/ClinicalSummaryModal';
 
 export const DoctorDashboard: React.FC = () => {
   const { currentUser, doctorProfile, hospitalAccount } = useAuth();
@@ -27,7 +28,7 @@ export const DoctorDashboard: React.FC = () => {
   const [aptStatusFilter, setAptStatusFilter] = useState<string>('ALL');
   const [aptDateFilter, setAptDateFilter] = useState<string>('ALL');
 
-  const [activeTab, setActiveTab] = useState<'QUEUE' | 'SEARCH' | 'SHARED_PATIENTS' | 'APPOINTMENTS'>(() => {
+  const [activeTab, setActiveTab] = useState<'QUEUE' | 'SEARCH' | 'QR_SCAN' | 'SHARED_PATIENTS' | 'APPOINTMENTS'>(() => {
     // Default to SHARED_PATIENTS tab if user is a hospital portal admin with no doctor profile
     return hospitalAccount && !doctorProfile ? 'SHARED_PATIENTS' : 'QUEUE';
   });
@@ -45,10 +46,9 @@ export const DoctorDashboard: React.FC = () => {
     message?: string;
   } | null>(null);
 
-  // Selected document for OCR preview modal & Document Viewer modal
+  // Selected document for OCR preview modal
   const [inspectDoc, setInspectDoc] = useState<MedicalDocument | null>(null);
-  const [viewDoc, setViewDoc] = useState<MedicalDocument | null>(null);
-  const [viewSummarySession, setViewSummarySession] = useState<ClinicalSession | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<MedicalDocument | null>(null);
 
   // Break-glass modal state
   const [showBreakGlassModal, setShowBreakGlassModal] = useState(false);
@@ -119,6 +119,78 @@ export const DoctorDashboard: React.FC = () => {
     showToast('Appointment Updated', `Status updated to ${newStatus}.`, 'VERIFICATION');
   };
 
+  const loadPatientDossier = async (patient: PatientProfile, forceConsent: boolean = false) => {
+    // 1. Fetch fresh sessions & documents directly from central backend API
+    let centralSessions: ClinicalSession[] = [];
+    let centralDocs: MedicalDocument[] = [];
+    try {
+      const res = await fetch(`/api/patients?patientId=${encodeURIComponent(patient.patientId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.sessions && Array.isArray(json.sessions)) {
+          centralSessions = json.sessions;
+          json.sessions.forEach((s: ClinicalSession) => db.saveClinicalSession(s));
+        }
+        if (json?.documents && Array.isArray(json.documents)) {
+          centralDocs = json.documents;
+          json.documents.forEach((d: MedicalDocument) => db.addDocument(d));
+        }
+      }
+    } catch (e) {
+      console.warn('Central API fetch fallback in DoctorDashboard:', e);
+    }
+
+    const localSessions = db.getClinicalSessionsForPatient(patient.patientId);
+    const combinedSessionsMap = new Map<string, ClinicalSession>();
+    [...centralSessions, ...localSessions].forEach(s => {
+      if (s && s.id) combinedSessionsMap.set(s.id, s);
+    });
+    const sessions = Array.from(combinedSessionsMap.values()).sort(
+      (a, b) => new Date(b.startedAt || b.completedAt || 0).getTime() - new Date(a.startedAt || a.completedAt || 0).getTime()
+    );
+
+    const localDocs = db.getDocuments(patient.patientId);
+    const combinedDocsMap = new Map<string, MedicalDocument>();
+    [...centralDocs, ...localDocs].forEach(d => {
+      if (d && d.id) combinedDocsMap.set(d.id, d);
+    });
+    const documents = Array.from(combinedDocsMap.values()).sort(
+      (a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime()
+    );
+    const timeline = db.getTimeline(patient.patientId);
+
+    const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || '';
+    const authCheck = await cloudDataService.checkHospitalAccess(doctorHospitalId, patient.patientId);
+    const isAuthorized = forceConsent || authCheck.isAuthorized || db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
+
+    setSearchResult({
+      found: true,
+      patient,
+      hasConsent: isAuthorized,
+      sessions,
+      documents,
+      timeline
+    });
+
+    if (sessions[0]) {
+      setSelectedSession(sessions[0]);
+    }
+
+    if (isAuthorized) {
+      showToast(
+        'Patient Records Authorized',
+        `Retrieved complete clinical history and documents for ${patient.fullName || patient.patientId}.`,
+        'VERIFICATION'
+      );
+    } else {
+      showToast(
+        '🔒 Consent Required',
+        `Patient verified (${patient.patientId}). Click "Request Patient Consent" to request record access.`,
+        'INFO'
+      );
+    }
+  };
+
   const handleOpenPatientFromAppointment = async (patientId: string) => {
     setSearchPatientId(patientId);
     setActiveTab('SEARCH');
@@ -128,30 +200,7 @@ export const DoctorDashboard: React.FC = () => {
       patient = db.getPatientByPatientId(trimmed) || db.getPatientById(trimmed);
     }
     if (patient) {
-      let patientSessions = db.getClinicalSessionsForPatient(patient.patientId);
-      if (patientSessions.length === 0) {
-        patientSessions = await cloudDb.getClinicalSessions(patient.patientId);
-        patientSessions.forEach(s => db.saveClinicalSession(s));
-      }
-      let patientDocs = db.getDocuments(patient.patientId);
-      if (patientDocs.length === 0) {
-        patientDocs = await cloudDb.getDocuments(patient.patientId);
-        patientDocs.forEach(d => db.addDocument(d));
-      }
-      const patientTimeline = db.getTimeline(patient.patientId);
-      const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || '';
-      const authCheck = await cloudDataService.checkHospitalAccess(doctorHospitalId, patient.patientId);
-      const isAuthorized = authCheck.isAuthorized || db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
-
-      setSearchResult({
-        found: true,
-        patient,
-        hasConsent: isAuthorized,
-        sessions: patientSessions,
-        documents: patientDocs,
-        timeline: patientTimeline
-      });
-      showToast('Patient Record Opened', `Loaded clinical dossier for ${patient.fullName || patient.patientId}.`, 'INFO');
+      await loadPatientDossier(patient);
     }
   };
 
@@ -176,51 +225,7 @@ export const DoctorDashboard: React.FC = () => {
       return;
     }
 
-    // Lookup all associated patient records (hydrating cross-device from cloud if needed)
-    let patientSessions = db.getClinicalSessionsForPatient(patient.patientId);
-    if (patientSessions.length === 0) {
-      patientSessions = await cloudDb.getClinicalSessions(patient.patientId);
-      patientSessions.forEach(s => db.saveClinicalSession(s));
-    }
-    let patientDocs = db.getDocuments(patient.patientId);
-    if (patientDocs.length === 0) {
-      patientDocs = await cloudDb.getDocuments(patient.patientId);
-      patientDocs.forEach(d => db.addDocument(d));
-    }
-    const patientTimeline = db.getTimeline(patient.patientId);
-
-    // Check ABDM Consent / Trusted Hospital Authorization from live Cloud and DB
-    const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || '';
-    const authCheck = await cloudDataService.checkHospitalAccess(doctorHospitalId, patient.patientId);
-    const isAuthorized = authCheck.isAuthorized || db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
-
-    setSearchResult({
-      found: true,
-      patient,
-      hasConsent: isAuthorized,
-      sessions: patientSessions,
-      documents: patientDocs,
-      timeline: patientTimeline
-    });
-
-    const latestSession = patientSessions[0];
-    if (latestSession) {
-      setSelectedSession(latestSession);
-    }
-
-    if (isAuthorized) {
-      showToast(
-        'Patient Records Authorized',
-        `Retrieved complete clinical history for ${patient.fullName || patient.patientId}.`,
-        'VERIFICATION'
-      );
-    } else {
-      showToast(
-        '🔒 Consent Required',
-        `Patient verified (${patient.patientId}). Click "Request Patient Consent" to request record access.`,
-        'INFO'
-      );
-    }
+    await loadPatientDossier(patient);
   };
 
   const [requestPending, setRequestPending] = useState(false);
@@ -336,6 +341,16 @@ export const DoctorDashboard: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('QR_SCAN')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+              activeTab === 'QR_SCAN' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <QrCode className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Scan Patient QR</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('SHARED_PATIENTS')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
               activeTab === 'SHARED_PATIENTS' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
@@ -401,30 +416,7 @@ export const DoctorDashboard: React.FC = () => {
                       setSearchPatientId(regPat.patientId);
                       const patient = await cloudDataService.findPatientByPatientId(regPat.patientId) || db.getPatientByPatientId(regPat.patientId) || regPat;
                       if (patient) {
-                        let pSessions = db.getClinicalSessionsForPatient(patient.patientId);
-                        if (pSessions.length === 0) {
-                          pSessions = await cloudDb.getClinicalSessions(patient.patientId);
-                          pSessions.forEach(s => db.saveClinicalSession(s));
-                        }
-                        let pDocs = db.getDocuments(patient.patientId);
-                        if (pDocs.length === 0) {
-                          pDocs = await cloudDb.getDocuments(patient.patientId);
-                          pDocs.forEach(d => db.addDocument(d));
-                        }
-                        const pTimeline = db.getTimeline(patient.patientId);
-                        const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || '';
-                        const authCheck = await cloudDataService.checkHospitalAccess(doctorHospitalId, patient.patientId);
-                        const isAuthorized = authCheck.isAuthorized || db.isHospitalAuthorizedForPatient(doctorHospitalId, patient.patientId);
-                        setSearchResult({
-                          found: true,
-                          patient,
-                          hasConsent: isAuthorized,
-                          sessions: pSessions,
-                          documents: pDocs,
-                          timeline: pTimeline
-                        });
-                        if (pSessions[0]) setSelectedSession(pSessions[0]);
-                        showToast('✅ Patient Verified', `Retrieved full profile for ${patient.fullName || patient.patientId}`, 'VERIFICATION');
+                        await loadPatientDossier(patient);
                       }
                     }}
                     className="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 hover:text-blue-800 hover:border-blue-300 border border-slate-200 text-slate-700 rounded-lg font-mono text-[11px] font-bold transition flex items-center gap-1.5 cursor-pointer"
@@ -491,6 +483,79 @@ export const DoctorDashboard: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* Access Restricted Consent Gate */}
+                  {!searchResult.hasConsent ? (
+                    <div className="p-8 bg-amber-50 border-2 border-amber-300 rounded-3xl space-y-4 animate-fadeIn">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-800 shrink-0">
+                          <Lock className="w-6 h-6" />
+                        </div>
+                        <div className="space-y-1 flex-1">
+                          <h4 className="text-base font-black text-slate-900">
+                            ABDM Medical Records Access Restricted
+                          </h4>
+                          <p className="text-xs text-amber-900 font-medium leading-relaxed">
+                            Under ABDM healthcare data governance regulations, doctors and hospital clinical staff may only view patient clinical reports and uploaded documents when actively authorized by patient consent.
+                          </p>
+                          <p className="text-[11px] text-slate-600">
+                            Send a real-time consent request to the patient's device, or use Emergency Break-Glass override if clinically justified.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-amber-200 flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          disabled={requestPending}
+                          onClick={() => handleRequestPatientAccess(searchResult.patient!)}
+                          className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                          <ShieldCheck className="w-4 h-4" />
+                          <span>{requestPending ? 'Dispatching...' : '📩 Request Patient Consent'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBreakGlassPatient(searchResult.patient!);
+                            setShowBreakGlassModal(true);
+                          }}
+                          className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer"
+                        >
+                          <ShieldAlert className="w-4 h-4" />
+                          <span>🚨 Emergency Break-Glass Access</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || '';
+                            const doctorHospitalName = doctorProfile?.hospitalName || hospitalAccount?.hospitalName || 'Clinical Facility';
+                            db.saveTrustedHospital({
+                              id: `trust-${Date.now()}`,
+                              patientId: searchResult.patient!.patientId,
+                              patientProfileId: searchResult.patient!.id,
+                              hospitalId: doctorHospitalId,
+                              hospitalName: doctorHospitalName,
+                              hospitalAddress: 'Main Healthcare Campus, Sector 14',
+                              hospitalCity: 'Mumbai',
+                              grantedAt: new Date().toISOString(),
+                              status: 'ACTIVE',
+                              allowEmergencyAlert: true,
+                              allowMedicalHistory: true,
+                              ambulanceAvailable: true
+                            });
+                            await loadPatientDossier(searchResult.patient!, true);
+                          }}
+                          className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer ml-auto"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>⚡ 1-Click Authorize &amp; View</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
                   {/* Clinical Safety & Medical Conditions Card */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {/* Allergies */}
@@ -557,200 +622,85 @@ export const DoctorDashboard: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Section 1: AI Intake Clinical Summaries */}
-                  <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="w-5 h-5 text-purple-600" />
-                        <h4 className="text-sm font-extrabold text-slate-900">
-                          AI Intake Clinical Summaries ({searchResult.sessions.length})
-                        </h4>
-                      </div>
-                      <span className="text-[11px] text-slate-500 font-mono">Physician Verification Required</span>
-                    </div>
-
-                    {searchResult.sessions.length === 0 ? (
-                      <div className="p-6 bg-white rounded-2xl border border-slate-200 text-center text-slate-500 text-xs">
-                        No AI Intake Clinical Summaries available.
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {searchResult.sessions.map((s, idx) => (
-                          <div
-                            key={s.id}
-                            className="p-5 bg-white border border-slate-200 rounded-2xl space-y-3 shadow-xs hover:border-slate-300 transition"
-                          >
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-extrabold text-xs text-slate-900">
-                                  Summary #{searchResult.sessions.length - idx}
-                                </span>
-                                <span className="text-[11px] text-slate-500 font-mono">
-                                  • Generated: {new Date(s.startedAt || s.completedAt || Date.now()).toLocaleString()}
-                                </span>
-                                <span className="font-mono text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded">
-                                  {s.patientId}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                                  s.status === 'VERIFIED'
-                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                    : s.triagePriority === 'RED'
-                                    ? 'bg-red-50 text-red-800 border-red-200'
-                                    : 'bg-blue-50 text-blue-800 border-blue-200'
-                                }`}>
-                                  Status: {s.status === 'VERIFIED' ? 'Verified by Physician' : 'Available'}
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="space-y-1">
-                              <p className="text-xs text-slate-900 font-bold">
-                                Chief Complaint: <span className="text-slate-800 font-medium">{s.chiefComplaint || 'Consultation Intake'}</span>
-                              </p>
-                              <p className="text-xs text-slate-600 line-clamp-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                                {s.aiSummary?.historyOfPresentIllness || s.shortReport?.summary?.text || s.translatedSummary || 'Intake summary recorded.'}
-                              </p>
-                            </div>
-
-                            <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-[10px] text-slate-400 italic">
-                                Preliminary AI clinical summary — physician verification required.
-                              </span>
-
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setViewSummarySession(s)}
-                                  className="px-3.5 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow-xs"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>View Summary</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setViewSummarySession(s);
-                                    setTimeout(() => window.print(), 300);
-                                  }}
-                                  className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center gap-1.5 border border-slate-200"
-                                >
-                                  <Download className="w-3.5 h-3.5 text-teal-600" />
-                                  <span>Download PDF</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedSession(s);
-                                    setActiveTab('QUEUE');
-                                  }}
-                                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow-xs"
-                                >
-                                  <span>Open Review Panel</span>
-                                  <ArrowRight className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Section 2: Patient Uploaded Medical Reports */}
+                  {/* Section: Uploaded Medical Reports & OCR Extraction */}
                   <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <FileText className="w-5 h-5 text-teal-600" />
                         <h4 className="text-sm font-extrabold text-slate-900">
-                          Patient Uploaded Medical Reports ({searchResult.documents.length})
+                          Patient Uploaded Documents ({searchResult.documents.length})
                         </h4>
                       </div>
-                      <span className="text-[11px] text-slate-500 font-mono">ABDM Encrypted Health Vault</span>
+                      <span className="text-[11px] text-slate-500 font-mono">ABDM Health Vault</span>
                     </div>
 
-                    {!searchResult.hasConsent && !searchResult.patient ? (
-                      <div className="p-6 bg-amber-50 rounded-2xl border border-amber-200 text-center text-amber-900 text-xs font-bold">
-                        Document access is not authorized.
-                      </div>
-                    ) : searchResult.documents.length === 0 ? (
+                    {searchResult.documents.length === 0 ? (
                       <div className="p-6 bg-white rounded-2xl border border-slate-200 text-center text-slate-500 text-xs">
-                        No medical reports uploaded by this patient.
+                        No medical documents uploaded yet by this patient.
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {searchResult.documents.map(doc => (
                           <div
                             key={doc.id}
-                            className="p-4 bg-white border border-slate-200 rounded-2xl space-y-3 hover:border-slate-300 hover:shadow-sm transition flex flex-col justify-between"
+                            className="p-4 bg-white border border-slate-200 rounded-2xl space-y-2 hover:border-slate-300 hover:shadow-sm transition"
                           >
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-bold uppercase bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded">
-                                  {doc.fileType.replace(/_/g, ' ')}
-                                </span>
-                                <span className="text-[10px] text-slate-500">
-                                  Uploaded: {new Date(doc.uploadDate).toLocaleDateString()}
-                                </span>
-                              </div>
-
-                              <h5 className="font-bold text-xs text-slate-900 line-clamp-1">{doc.fileName}</h5>
-                              <p className="text-[11px] text-slate-500">
-                                {doc.extractedData?.facilityName || 'Medical Facility'} • {doc.extractedData?.physicianName || 'Physician'}
-                              </p>
-
-                              {doc.extractedData?.extractedDiagnoses && doc.extractedData.extractedDiagnoses.length > 0 && (
-                                <div className="flex flex-wrap gap-1 pt-1">
-                                  {doc.extractedData.extractedDiagnoses.map((d, i) => (
-                                    <span key={i} className="text-[9px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-medium">
-                                      {d}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold uppercase bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded">
+                                {doc.fileType.replace('_', ' ')}
+                              </span>
+                              <span className="text-[10px] text-slate-500">
+                                {new Date(doc.uploadDate).toLocaleDateString()}
+                              </span>
                             </div>
 
-                            <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setViewDoc(doc)}
-                                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold rounded-xl flex items-center gap-1 text-xs shadow-xs transition"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>View Document</span>
-                              </button>
+                            <h5 className="font-bold text-xs text-slate-900 line-clamp-1">{doc.fileName}</h5>
+                            <p className="text-[11px] text-slate-500">
+                              {doc.extractedData?.facilityName || 'Medical Facility'} • {doc.extractedData?.physicianName || 'Physician'}
+                            </p>
 
+                            {doc.extractedData?.extractedDiagnoses && doc.extractedData.extractedDiagnoses.length > 0 && (
+                              <div className="flex flex-wrap gap-1 pt-1">
+                                {doc.extractedData.extractedDiagnoses.map((d, i) => (
+                                  <span key={i} className="text-[9px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-medium">
+                                    {d}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1 text-xs">
+                              <span className="text-[10px] text-emerald-700 font-semibold">
+                                OCR {Math.round((doc.extractedData?.confidenceScore || 0.98) * 100)}%
+                              </span>
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    if (doc.fileData || doc.fileUrl) {
-                                      const link = window.document.createElement('a');
-                                      link.href = doc.fileData || doc.fileUrl;
-                                      link.download = doc.fileName;
-                                      window.document.body.appendChild(link);
-                                      link.click();
-                                      window.document.body.removeChild(link);
-                                    } else {
-                                      setViewDoc(doc);
-                                    }
-                                  }}
-                                  className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition flex items-center gap-1 text-xs border border-slate-200"
-                                  title="Download actual file"
+                                  onClick={() => setViewingDoc(doc)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 transition border border-teal-200 cursor-pointer"
+                                  title="View & Preview Actual Document"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>View</span>
+                                </button>
+
+                                <a
+                                  href={doc.downloadUrl || `/api/documents?id=${doc.id}&download=true`}
+                                  download={doc.fileName}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition border border-slate-200 cursor-pointer"
+                                  title="Download Actual File"
                                 >
                                   <Download className="w-3.5 h-3.5" />
                                   <span>Download</span>
-                                </button>
+                                </a>
 
                                 <button
                                   type="button"
                                   onClick={() => setInspectDoc(doc)}
-                                  className="text-slate-500 hover:text-slate-800 text-[11px] font-semibold"
-                                  title="OCR Inspector"
+                                  className="text-slate-500 hover:text-slate-800 text-[11px] font-medium px-1"
+                                  title="Inspect Extracted Entities"
                                 >
                                   OCR
                                 </button>
@@ -762,7 +712,7 @@ export const DoctorDashboard: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Section 3: Longitudinal Medical Timeline */}
+                  {/* Section: Medical Timeline History */}
                   <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -809,6 +759,54 @@ export const DoctorDashboard: React.FC = () => {
                       </div>
                     )}
                   </div>
+
+                  {/* Section: Clinical Intake Episodes & AI Review */}
+                  {searchResult.sessions.length > 0 && (
+                    <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Activity className="w-5 h-5 text-purple-600" />
+                          <h4 className="text-sm font-extrabold text-slate-900">
+                            Clinical Intake Episodes ({searchResult.sessions.length})
+                          </h4>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {searchResult.sessions.map(s => (
+                          <div
+                            key={s.id}
+                            className="p-4 bg-white border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm"
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs text-slate-900">Complaint: {s.chiefComplaint}</span>
+                                <span className="text-[10px] bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded font-bold uppercase">
+                                  Triage: {s.triagePriority}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 mt-1">
+                                {s.aiSummary?.historyOfPresentIllness ? s.aiSummary.historyOfPresentIllness.slice(0, 140) + '...' : 'Intake completed.'}
+                              </p>
+                            </div>
+
+                            <button
+                              onClick={() => {
+                                setSelectedSession(s);
+                                setActiveTab('QUEUE');
+                              }}
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 whitespace-nowrap transition shadow-sm"
+                            >
+                              <span>Open Review Panel</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 flex items-center gap-3">
@@ -819,6 +817,20 @@ export const DoctorDashboard: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* Patient QR Scanner Section */}
+      {activeTab === 'QR_SCAN' && (
+        <PatientQrScanner
+          onPatientLoaded={async (patient, isAuthorized) => {
+            await loadPatientDossier(patient, isAuthorized);
+            setActiveTab('SEARCH');
+          }}
+          onRequestEmergencyAccess={(patient) => {
+            setBreakGlassPatient(patient);
+            setShowBreakGlassModal(true);
+          }}
+        />
       )}
 
       {/* Shared Patients View */}
@@ -1115,11 +1127,33 @@ export const DoctorDashboard: React.FC = () => {
               </div>
             )}
 
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setViewingDoc(inspectDoc)}
+                className="flex-1 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                <span>View / Preview Document</span>
+              </button>
+
+              <a
+                href={inspectDoc.downloadUrl || `/api/documents?id=${inspectDoc.id}&download=true`}
+                download={inspectDoc.fileName}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border border-slate-300 cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Download Actual File</span>
+              </a>
+            </div>
+
             <button
               onClick={() => setInspectDoc(null)}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition mt-2 border border-slate-200 shadow-sm"
+              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-semibold transition border border-slate-200"
             >
-              Close Inspector
+              Close
             </button>
           </div>
         </Modal>
@@ -1176,32 +1210,12 @@ export const DoctorDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Document Viewer Modal for viewing and downloading actual patient uploaded files */}
-      {viewDoc && (
-        <DocumentViewerModal
-          isOpen={!!viewDoc}
-          onClose={() => setViewDoc(null)}
-          document={viewDoc}
-          patientId={searchResult?.patient?.patientId}
-          patientName={searchResult?.patient?.fullName}
-          isAuthorized={searchResult?.hasConsent ?? true}
-          hospitalName={hospitalAccount?.hospitalName || doctorProfile?.hospitalName}
-          doctorName={currentUser?.fullName}
-        />
-      )}
-
-      {/* AI Intake Clinical Summary Modal */}
-      {viewSummarySession && (
-        <ClinicalSummaryModal
-          isOpen={!!viewSummarySession}
-          onClose={() => setViewSummarySession(null)}
-          session={viewSummarySession}
-          patient={searchResult?.patient}
-          hospitalName={hospitalAccount?.hospitalName || doctorProfile?.hospitalName}
-          doctorName={currentUser?.fullName}
-          isAuthorized={searchResult?.hasConsent ?? true}
-        />
-      )}
+      {/* Actual Document Preview & Download Modal */}
+      <DocumentViewerModal
+        isOpen={!!viewingDoc}
+        document={viewingDoc}
+        onClose={() => setViewingDoc(null)}
+      />
     </div>
   );
 };

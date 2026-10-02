@@ -173,7 +173,7 @@ export const TrustedHospitalsManager: React.FC = () => {
     setLoadingId(hospital.id);
     await new Promise(r => setTimeout(r, 600));
 
-    const pId = patientProfile?.patientId || patientId || (currentUser ? `pat-${currentUser.id}` : '');
+    const pId = patientProfile?.patientId || patientId || (currentUser ? `pat-${currentUser.id}` : 'pat-demo');
     const existing = trustedList.find(t => t.hospitalId === hospital.id);
 
     if (existing) {

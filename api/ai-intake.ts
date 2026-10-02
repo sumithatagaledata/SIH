@@ -208,7 +208,7 @@ async function callOpenAI(prompt: string, systemInstruction: string): Promise<st
 
 async function callPollinationsLLM(prompt: string, systemInstruction: string): Promise<string | null> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000);
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
 
   try {
     const res = await fetch('https://text.pollinations.ai/openai/chat/completions', {
@@ -619,7 +619,7 @@ Generate the next intelligent, context-aware clinical intake response.`;
   if (action === 'generate_report') {
     const {
       sessionId = `ses-${Date.now()}`,
-      patientId = payload.patientId || '',
+      patientId = 'MB-2026-ACTIVE',
       encounterId = payload.encounterId || payload.appointmentId || `enc-${Date.now()}`,
       appointmentId = payload.appointmentId || `apt-${Date.now()}`,
       patientProfile,

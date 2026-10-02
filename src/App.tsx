@@ -9,6 +9,7 @@ import { AdminLoginPage } from './pages/admin/AdminLoginPage';
 import { PatientDashboard } from './pages/patient/PatientDashboard';
 import { HospitalDashboard } from './pages/hospital/HospitalDashboard';
 import { AdminDashboard } from './pages/admin/AdminDashboard';
+import { PublicQrGate } from './pages/public/PublicQrGate';
 
 // Helper to determine canonical dashboard route for an authenticated role
 const getAuthorizedDashboardRoute = (role: string | null): string => {
@@ -48,6 +49,7 @@ const AppContent: React.FC = () => {
         !activePath.startsWith('/admin') &&
         !activePath.startsWith('/hospital') &&
         !activePath.startsWith('/patient') &&
+        !activePath.startsWith('/qr') &&
         activePath !== '/login' &&
         activePath !== '/'
       ) {
@@ -77,8 +79,8 @@ const AppContent: React.FC = () => {
         }
         window.history.replaceState({}, '', authorizedDashboard);
         setCurrentPath(authorizedDashboard);
-      } else if (activePath === '/login' || activePath === '/') {
-        // Authenticated users landing on /login or / should be routed to their dashboard
+      } else if (activePath === '/login' || activePath === '/' || activePath.startsWith('/qr')) {
+        // Authenticated users landing on /login, /, or /qr should be routed to their authorized dashboard
         window.history.replaceState({}, '', authorizedDashboard);
         setCurrentPath(authorizedDashboard);
       } else if (activePath !== currentPath) {
@@ -143,6 +145,15 @@ const AppContent: React.FC = () => {
       return (
         <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-center font-sans selection:bg-teal-500 selection:text-white">
           <LoginPage onNavigate={handleNavigate} initialPortal="PATIENT" />
+        </div>
+      );
+    }
+
+    // Public QR Access Gate (/qr or /qr?token=...)
+    if (rawPath.startsWith('/qr')) {
+      return (
+        <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col justify-center font-sans selection:bg-teal-500 selection:text-white">
+          <PublicQrGate onNavigate={handleNavigate} />
         </div>
       );
     }

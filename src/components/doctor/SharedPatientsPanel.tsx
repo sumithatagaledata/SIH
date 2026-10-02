@@ -3,12 +3,11 @@ import {
   Users, Search, ChevronDown, ChevronUp, ShieldCheck,
   User, Activity, Clock, AlertTriangle, FileText,
   Heart, Phone, MapPin, RefreshCw, Eye, Lock,
-  CheckCircle2, Siren, Building2, Info, Calendar, Download, Sparkles
+  CheckCircle2, Siren, Building2, Info, Calendar, Download
 } from 'lucide-react';
 import { db } from '../../services/mockDatabase';
 import { useAuth } from '../../context/AuthContext';
 import { PatientProfile, User as UserType, TrustedHospital, ClinicalSession, MedicalDocument } from '../../types';
-import { ClinicalSummaryModal } from '../common/ClinicalSummaryModal';
 import { DocumentViewerModal } from '../common/DocumentViewerModal';
 
 interface AuthorizedPatient {
@@ -26,8 +25,7 @@ const PatientCard: React.FC<PatientCardProps> = ({ data, hospitalAccountId }) =>
   const { profile, user, trustedRecord } = data;
   const [expanded, setExpanded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedSummarySession, setSelectedSummarySession] = useState<ClinicalSession | null>(null);
-  const [selectedViewDoc, setSelectedViewDoc] = useState<MedicalDocument | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<MedicalDocument | null>(null);
 
   // Fetch patient sessions, docs, timeline
   const sessions = db.getClinicalSessionsForPatient(profile.patientId || profile.id);
@@ -146,206 +144,76 @@ const PatientCard: React.FC<PatientCardProps> = ({ data, hospitalAccountId }) =>
 
       {/* Expanded Clinical Record Details */}
       {expanded && (
-        <div className="border-t border-slate-200 bg-slate-50/70 p-5 space-y-5 text-xs">
-          {/* AI Intake Clinical Summaries */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h5 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-teal-600" />
-                <span>AI Intake Clinical Summaries ({sessions.length})</span>
+        <div className="border-t border-slate-200 bg-slate-50/70 p-5 space-y-4 text-xs">
+          {/* Chief Complaint / Symptoms */}
+          {latestSession?.aiSummary && (
+            <div className="space-y-2 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <h5 className="text-xs font-bold text-teal-800 uppercase tracking-wider flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-teal-600" /> Chief Complaints &amp; HPI
               </h5>
-              <span className="text-[10px] text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full font-bold">
-                Physician Verification Required
-              </span>
+              <p className="text-slate-800 font-medium">{latestSession.aiSummary.chiefComplaints}</p>
+              <p className="text-slate-600 whitespace-pre-line text-[11px] leading-relaxed">
+                {latestSession.aiSummary.historyOfPresentIllness}
+              </p>
             </div>
+          )}
 
-            {sessions.length === 0 ? (
-              <div className="p-4 bg-white border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
-                No AI Intake Clinical Summaries available.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {sessions.map((ses, idx) => (
-                  <div key={ses.id} className="p-3.5 bg-white border border-slate-200 rounded-2xl space-y-2 hover:border-teal-300 transition shadow-sm">
-                    <div className="flex items-start justify-between flex-wrap gap-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-xs text-slate-900">Summary #{sessions.length - idx}</span>
-                          <span className="text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
-                            Available
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          Generated: {new Date(ses.startedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedSummarySession(ses);
-                            db.logAction(
-                              'hosp-user',
-                              'Hospital Doctor',
-                              'HOSPITAL_ADMIN',
-                              'RECORD_VIEWED',
-                              'ClinicalSummary',
-                              ses.id,
-                              `Hospital viewed summary for patient ${profile.patientId}`
-                            );
-                          }}
-                          className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white font-bold text-[11px] rounded-lg shadow-sm transition flex items-center gap-1 cursor-pointer"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>View Summary</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedSummarySession(ses);
-                            db.logAction(
-                              'hosp-user',
-                              'Hospital Doctor',
-                              'HOSPITAL_ADMIN',
-                              'RECORD_VIEWED',
-                              'ClinicalSummary',
-                              ses.id,
-                              `Hospital downloaded PDF for patient ${profile.patientId}`
-                            );
-                          }}
-                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 font-bold text-[11px] rounded-lg transition flex items-center gap-1 cursor-pointer"
-                        >
-                          <Download className="w-3 h-3 text-teal-700" />
-                          <span>PDF</span>
-                        </button>
+          {/* Timeline & Reports Preview */}
+          {docs.length > 0 && (
+            <div className="space-y-2 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <h5 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <FileText className="w-3.5 h-3.5 text-blue-600" /> Uploaded Reports ({docs.length})
+              </h5>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {docs.slice(0, 4).map(doc => (
+                  <div key={doc.id} className="flex items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold text-slate-800 truncate">{doc.fileName}</p>
+                        <p className="text-[10px] text-slate-500">{doc.fileType.replace(/_/g, ' ')}</p>
                       </div>
                     </div>
-
-                    <p className="text-slate-800 font-medium text-xs">
-                      <strong>Chief Complaint:</strong> {ses.chiefComplaint}
-                    </p>
-                    {ses.aiSummary?.historyOfPresentIllness && (
-                      <p className="text-slate-600 text-[11px] line-clamp-2 leading-relaxed">
-                        {ses.aiSummary.historyOfPresentIllness}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Uploaded Reports & Documents */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h5 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-blue-600" />
-                <span>Patient Uploaded Medical Reports ({docs.length})</span>
-              </h5>
-              <span className="text-[10px] text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full font-bold">
-                Private &amp; Verified
-              </span>
-            </div>
-
-            {docs.length === 0 ? (
-              <div className="p-4 bg-white border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
-                No medical reports uploaded by this patient.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {docs.map(doc => (
-                  <div key={doc.id} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2 hover:border-blue-300 transition shadow-sm flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between text-[10px] text-slate-400">
-                        <span className="font-bold text-blue-700 uppercase bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">
-                          {doc.fileType.replace(/_/g, ' ')}
-                        </span>
-                        <span>{new Date(doc.uploadDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-                      </div>
-                      <p className="text-xs font-bold text-slate-900 truncate mt-1" title={doc.fileName}>{doc.fileName}</p>
-                      <p className="text-[10px] text-slate-500">{doc.extractedData?.facilityName || 'Diagnostic Report'} • {doc.fileSize}</p>
-                    </div>
-
-                    <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         type="button"
-                        onClick={() => {
-                          setSelectedViewDoc(doc);
-                          db.logAction(
-                            'hosp-user',
-                            'Hospital Doctor',
-                            'HOSPITAL_ADMIN',
-                            'RECORD_VIEWED',
-                            'MedicalDocument',
-                            doc.id,
-                            `Hospital opened document "${doc.fileName}" for patient ${profile.patientId}`
-                          );
-                        }}
-                        className="flex-1 py-1 px-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] rounded-lg shadow-sm transition flex items-center justify-center gap-1 cursor-pointer"
+                        onClick={() => setViewingDoc(doc)}
+                        className="p-1.5 text-xs text-teal-700 hover:bg-teal-50 rounded-lg transition border border-teal-200"
+                        title="View Document"
                       >
-                        <Eye className="w-3 h-3" />
-                        <span>View Document</span>
+                        <Eye className="w-3.5 h-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedViewDoc(doc);
-                          db.logAction(
-                            'hosp-user',
-                            'Hospital Doctor',
-                            'HOSPITAL_ADMIN',
-                            'RECORD_VIEWED',
-                            'MedicalDocument',
-                            doc.id,
-                            `Hospital downloaded document "${doc.fileName}" for patient ${profile.patientId}`
-                          );
-                        }}
-                        className="p-1 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-lg transition cursor-pointer"
+                      <a
+                        href={doc.downloadUrl || `/api/documents?id=${doc.id}&download=true`}
+                        download={doc.fileName}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg transition border border-slate-200"
                         title="Download Document"
                       >
-                        <Download className="w-3 h-3 text-blue-700" />
-                      </button>
+                        <Download className="w-3.5 h-3.5" />
+                      </a>
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Disclaimer */}
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[10px] text-amber-900 flex items-start gap-2">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-600" />
-            <span>AI-generated preliminary clinical summary — physician verification required. Not a final diagnosis. All access is logged for audit compliance.</span>
+            <span>AI-Generated Clinical Data — Requires Physician Verification. Not a final diagnosis. All access is logged for audit compliance.</span>
           </div>
         </div>
       )}
 
-      {/* Modals */}
-      {selectedSummarySession && (
-        <ClinicalSummaryModal
-          isOpen={!!selectedSummarySession}
-          session={selectedSummarySession}
-          patient={profile}
-          onClose={() => setSelectedSummarySession(null)}
-          hospitalName="Authorized Healthcare Facility"
-          doctorName="Attending Physician"
-          isAuthorized={true}
-        />
-      )}
-
-      {selectedViewDoc && (
-        <DocumentViewerModal
-          isOpen={!!selectedViewDoc}
-          document={selectedViewDoc}
-          patientId={profile.patientId}
-          patientName={user.fullName}
-          onClose={() => setSelectedViewDoc(null)}
-          hospitalName="Authorized Healthcare Facility"
-          doctorName="Attending Physician"
-          isAuthorized={true}
-        />
-      )}
+      {/* Actual Document Preview & Download Modal */}
+      <DocumentViewerModal
+        isOpen={!!viewingDoc}
+        document={viewingDoc}
+        onClose={() => setViewingDoc(null)}
+      />
     </div>
   );
 };

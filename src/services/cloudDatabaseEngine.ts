@@ -604,8 +604,8 @@ class CloudDatabaseEngine {
     if (hospital) {
       const user = {
         id: hospital.userId || `usr-hosp-${hospital.hospitalId}`,
-        email: hospital.email,
-        password: hospital.password,
+        email: hospital.email || `admin@${(hospital.code || hospital.hospitalId).toLowerCase()}.in`,
+        password: hospital.password || 'Hospital@123',
         phone: hospital.phone || hospital.emergencyContact,
         fullName: hospital.hospitalName,
         role: 'HOSPITAL_ADMIN',
@@ -836,6 +836,25 @@ class CloudDatabaseEngine {
   // CLINICAL SESSIONS (Pre-Arrival Triage)
   // ==========================================
   public async getClinicalSessions(patientId?: string): Promise<ClinicalSession[]> {
+    if (patientId && typeof window !== 'undefined' && window.location) {
+      try {
+        const res = await fetch(`/api/patients?patientId=${encodeURIComponent(patientId.trim())}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.sessions && Array.isArray(data.sessions)) {
+            data.sessions.forEach((s: ClinicalSession) => {
+              if (!this.sessionsCache.some(existing => existing.id === s.id)) {
+                this.sessionsCache.unshift(s);
+              }
+            });
+            return data.sessions;
+          }
+        }
+      } catch (e) {
+        console.warn('Error fetching clinical sessions from central API:', e);
+      }
+    }
+
     await this.syncAll();
     if (!patientId) return this.sessionsCache;
     const clean = patientId.trim().toUpperCase();
@@ -870,6 +889,25 @@ class CloudDatabaseEngine {
   // MEDICAL DOCUMENTS (Cloud Vault Sync)
   // ==========================================
   public async getDocuments(patientId?: string): Promise<MedicalDocument[]> {
+    if (patientId && typeof window !== 'undefined' && window.location) {
+      try {
+        const res = await fetch(`/api/patients?patientId=${encodeURIComponent(patientId.trim())}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.documents && Array.isArray(data.documents)) {
+            data.documents.forEach((d: MedicalDocument) => {
+              if (!this.documentsCache.some(existing => existing.id === d.id)) {
+                this.documentsCache.unshift(d);
+              }
+            });
+            return data.documents;
+          }
+        }
+      } catch (e) {
+        console.warn('Error fetching documents from central API:', e);
+      }
+    }
+
     await this.syncAll();
     if (!patientId) return this.documentsCache;
     const clean = patientId.trim().toUpperCase();

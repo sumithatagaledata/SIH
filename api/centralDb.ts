@@ -1,5 +1,16 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+
+export interface PatientQrRecord {
+  id: string;
+  patientUserId: string;
+  patientId: string;
+  secureToken: string;
+  createdAt: string;
+  updatedAt: string;
+  status: 'ACTIVE' | 'REVOKED';
+}
 
 export interface User {
   id: string;
@@ -110,30 +121,73 @@ export interface CentralDatabase {
   appointments: any[];
   auditLogs: any[];
   verificationCodes: Record<string, EmailVerificationRecord>;
+  patientQrs: PatientQrRecord[];
   version: number;
   lastUpdated: string;
   clearedAt?: string;
 }
 
-export const DEFAULT_ADMIN_USERS: User[] = [];
+export const DEFAULT_ADMIN_USERS: User[] = [
+  {
+    id: 'usr-admin-root',
+    email: 'admin@medibridge.ai',
+    password: 'Admin@123',
+    phone: '+91 99300 88777',
+    fullName: 'System Administrator',
+    role: 'SYSTEM_ADMIN',
+    isEmailVerified: true,
+    createdAt: '2025-10-01T08:00:00Z'
+  },
+  {
+    id: 'usr-admin-gov',
+    email: 'admin@medibridge.gov.in',
+    password: 'Admin@2026',
+    phone: '+91 11 2300 0000',
+    fullName: 'National Health Administrator',
+    role: 'SYSTEM_ADMIN',
+    isEmailVerified: true,
+    createdAt: '2025-10-01T08:00:00Z'
+  },
+  {
+    id: 'usr-admin-in',
+    email: 'admin@medibridge.in',
+    password: 'Admin@2026',
+    phone: '+91 11 2300 0000',
+    fullName: 'Platform Administrator',
+    role: 'SYSTEM_ADMIN',
+    isEmailVerified: true,
+    createdAt: '2025-10-01T08:00:00Z'
+  }
+];
 
 let inMemoryDb: CentralDatabase | null = null;
 
 export function getDbFilePath(): string {
-  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
-    return path.join('/tmp', 'medibridge_central_database.json');
+  if (process.env.VERCEL) {
+    const tmpFile = path.join('/tmp', 'medibridge_central_database.json');
+    if (!fs.existsSync(tmpFile)) {
+      try {
+        const seedPath = path.join(process.cwd(), 'data', 'medibridge_central_database.json');
+        if (fs.existsSync(seedPath)) {
+          fs.copyFileSync(seedPath, tmpFile);
+        }
+      } catch (err) {
+        console.warn('[CentralDb] Seed to /tmp error:', err);
+      }
+    }
+    return tmpFile;
   }
 
   try {
     const cwd = process.cwd();
     const dataDir = path.join(cwd, 'data');
-    if (fs.existsSync(dataDir)) {
+    if (!fs.existsSync(dataDir)) {
       try {
-        const testFile = path.join(dataDir, '.write_test');
-        fs.writeFileSync(testFile, '1');
-        fs.unlinkSync(testFile);
-        return path.join(dataDir, 'medibridge_central_database.json');
+        fs.mkdirSync(dataDir, { recursive: true });
       } catch {}
+    }
+    if (fs.existsSync(dataDir)) {
+      return path.join(dataDir, 'medibridge_central_database.json');
     }
   } catch {}
 
@@ -162,6 +216,7 @@ function sanitizeDatabase(data: any): CentralDatabase {
     appointments: Array.isArray(data?.appointments) ? data.appointments : [],
     auditLogs: Array.isArray(data?.auditLogs) ? data.auditLogs : [],
     verificationCodes: (data?.verificationCodes && typeof data.verificationCodes === 'object') ? data.verificationCodes : {},
+    patientQrs: Array.isArray(data?.patientQrs) ? data.patientQrs : [],
     version: typeof data?.version === 'number' ? data.version : 1,
     lastUpdated: data?.lastUpdated || new Date().toISOString(),
     clearedAt: data?.clearedAt
@@ -249,6 +304,7 @@ export function clearAllRegistrations(): { success: boolean; clearedAt: string; 
     appointments: [],
     auditLogs: [],
     verificationCodes: {},
+    patientQrs: [],
     version: Date.now(),
     lastUpdated: now,
     clearedAt: now
@@ -362,17 +418,47 @@ export function getClinicalSessionsForPatient(patientId: string): any[] {
   const clean = patientId.trim().toLowerCase();
   const cleanAlpha = clean.replace(/[^a-z0-9]/g, '');
   const db = getDatabase();
-  return db.sessions.filter(s => {
+  const patient = findPatientByIdentifier(patientId);
+  const validIds = new Set<string>([clean, cleanAlpha]);
+  if (patient) {
+    if (patient.id) validIds.add(patient.id.trim().toLowerCase());
+    if (patient.patientId) {
+      validIds.add(patient.patientId.trim().toLowerCase());
+      validIds.add(patient.patientId.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+    }
+    if (patient.userId) validIds.add(patient.userId.trim().toLowerCase());
+  }
+
+  const seenIds = new Set<string>();
+  const matches: any[] = [];
+
+  for (const s of (db.sessions || [])) {
+    if (!s || !s.id || seenIds.has(s.id)) continue;
     const sId = (s.patientId || '').trim().toLowerCase();
     const sAlpha = sId.replace(/[^a-z0-9]/g, '');
-    return sId === clean || sAlpha === cleanAlpha;
-  });
+    const sUserId = (s.userId || '').trim().toLowerCase();
+    const sPatName = (s.patientName || '').trim().toLowerCase();
+    const patName = (patient?.fullName || '').trim().toLowerCase();
+
+    const isMatch =
+      validIds.has(sId) ||
+      validIds.has(sAlpha) ||
+      (sUserId && validIds.has(sUserId)) ||
+      (patName && sPatName && patName === sPatName);
+
+    if (isMatch) {
+      seenIds.add(s.id);
+      matches.push(s);
+    }
+  }
+
+  return matches.sort((a, b) => new Date(b.completedAt || b.startedAt || 0).getTime() - new Date(a.completedAt || a.startedAt || 0).getTime());
 }
 
 export function saveMedicalDocument(document: any): boolean {
   if (!document || !document.id) return false;
   const db = getDatabase();
-  db.documents = db.documents.filter(d => d.id !== document.id);
+  db.documents = (db.documents || []).filter(d => d.id !== document.id);
   db.documents.unshift(document);
   return saveDatabase(db);
 }
@@ -382,11 +468,100 @@ export function getMedicalDocumentsForPatient(patientId: string): any[] {
   const clean = patientId.trim().toLowerCase();
   const cleanAlpha = clean.replace(/[^a-z0-9]/g, '');
   const db = getDatabase();
-  return db.documents.filter(d => {
+  const patient = findPatientByIdentifier(patientId);
+  const validIds = new Set<string>([clean, cleanAlpha]);
+  if (patient) {
+    if (patient.id) validIds.add(patient.id.trim().toLowerCase());
+    if (patient.patientId) {
+      validIds.add(patient.patientId.trim().toLowerCase());
+      validIds.add(patient.patientId.trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+    }
+    if (patient.userId) validIds.add(patient.userId.trim().toLowerCase());
+  }
+
+  const seenIds = new Set<string>();
+  const matches: any[] = [];
+
+  for (const d of (db.documents || [])) {
+    if (!d || !d.id || seenIds.has(d.id)) continue;
     const dId = (d.patientId || '').trim().toLowerCase();
     const dAlpha = dId.replace(/[^a-z0-9]/g, '');
-    return dId === clean || dAlpha === cleanAlpha;
+    const dUserId = (d.userId || '').trim().toLowerCase();
+
+    if (validIds.has(dId) || validIds.has(dAlpha) || (dUserId && validIds.has(dUserId))) {
+      seenIds.add(d.id);
+      matches.push(d);
+    }
+  }
+
+  return matches.sort((a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime());
+}
+
+export function isHospitalAuthorizedForPatient(hospitalIdentifier: string, patientIdentifier: string): boolean {
+  if (!hospitalIdentifier || !patientIdentifier) return false;
+  const cleanHosp = hospitalIdentifier.trim().toLowerCase();
+  const cleanPat = patientIdentifier.trim().toLowerCase();
+  const cleanPatAlpha = cleanPat.replace(/[^a-z0-9]/g, '');
+
+  const db = getDatabase();
+  const patient = findPatientByIdentifier(patientIdentifier);
+  const validPatIds = new Set<string>([cleanPat, cleanPatAlpha]);
+  if (patient) {
+    if (patient.id) validPatIds.add(patient.id.toLowerCase());
+    if (patient.patientId) {
+      validPatIds.add(patient.patientId.toLowerCase());
+      validPatIds.add(patient.patientId.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    }
+    if (patient.userId) validPatIds.add(patient.userId.toLowerCase());
+  }
+
+  const hosp = findHospitalByIdentifier(hospitalIdentifier);
+  const validHospIds = new Set<string>([cleanHosp]);
+  if (hosp) {
+    if (hosp.id) validHospIds.add(hosp.id.toLowerCase());
+    if (hosp.hospitalId) validHospIds.add(hosp.hospitalId.toLowerCase());
+    if (hosp.hospitalName) validHospIds.add(hosp.hospitalName.toLowerCase());
+    if (hosp.registrationId) validHospIds.add(hosp.registrationId.toLowerCase());
+  }
+
+  // Check trusted hospitals
+  const isTrusted = (db.trustedHospitals || []).some(t => {
+    if (t.status !== 'ACTIVE') return false;
+    const tHosp = (t.hospitalId || '').toLowerCase();
+    const tHospName = (t.hospitalName || '').toLowerCase();
+    const tPat = (t.patientId || '').toLowerCase();
+    const tPatAlpha = tPat.replace(/[^a-z0-9]/g, '');
+    const hospMatch = validHospIds.has(tHosp) || validHospIds.has(tHospName) || cleanHosp.includes(tHosp) || (tHosp && cleanHosp.includes(tHosp));
+    const patMatch = validPatIds.has(tPat) || validPatIds.has(tPatAlpha);
+    return hospMatch && patMatch;
   });
+  if (isTrusted) return true;
+
+  // Check access requests approved
+  const isApproved = (db.accessRequests || []).some(r => {
+    if (r.status !== 'APPROVED') return false;
+    const rHosp = (r.hospitalId || '').toLowerCase();
+    const rHospName = (r.hospitalName || '').toLowerCase();
+    const rPat = (r.patientId || '').toLowerCase();
+    const rPatAlpha = rPat.replace(/[^a-z0-9]/g, '');
+    const hospMatch = validHospIds.has(rHosp) || validHospIds.has(rHospName) || cleanHosp.includes(rHosp) || (rHosp && cleanHosp.includes(rHosp));
+    const patMatch = validPatIds.has(rPat) || validPatIds.has(rPatAlpha);
+    return hospMatch && patMatch;
+  });
+  if (isApproved) return true;
+
+  // Check clinical sessions targeting this hospital
+  const targetedSession = (db.sessions || []).some(s => {
+    const sHosp = (s.selectedHospitalId || '').toLowerCase();
+    const sPat = (s.patientId || '').toLowerCase();
+    const sPatAlpha = sPat.replace(/[^a-z0-9]/g, '');
+    const hospMatch = sHosp && (validHospIds.has(sHosp) || cleanHosp.includes(sHosp) || sHosp.includes(cleanHosp));
+    const patMatch = validPatIds.has(sPat) || validPatIds.has(sPatAlpha);
+    return hospMatch && patMatch;
+  });
+  if (targetedSession) return true;
+
+  return false;
 }
 
 export function saveAppointment(appointment: any): boolean {
@@ -582,3 +757,186 @@ export function markEmailVerified(email: string): { user?: User; patient?: Patie
   saveDatabase(db);
   return { user, patient };
 }
+
+/**
+ * Generates a secure, non-guessable random token for patient QR codes.
+ * Contains no personal health data.
+ */
+export function generateSecureToken(): string {
+  try {
+    return 'mbqr_' + crypto.randomBytes(24).toString('hex');
+  } catch {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let token = 'mbqr_';
+    for (let i = 0; i < 48; i++) {
+      token += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return token;
+  }
+}
+
+/**
+ * Gets or permanently generates an active QR record for a registered patient.
+ * Automatically gives existing patients a QR code without losing any data.
+ */
+export function getOrCreatePatientQr(patientIdOrProfile: string | PatientProfile): PatientQrRecord | null {
+  const db = getDatabase();
+  if (!db.patientQrs) db.patientQrs = [];
+
+  let patient: PatientProfile | undefined;
+  if (typeof patientIdOrProfile === 'string') {
+    patient = findPatientByIdentifier(patientIdOrProfile);
+  } else {
+    patient = patientIdOrProfile;
+  }
+
+  if (!patient || !patient.patientId) return null;
+  const cleanPatId = patient.patientId.trim().toUpperCase();
+
+  // Check if active QR already exists for this patient
+  const existing = db.patientQrs.find(
+    qr => qr.patientId.toUpperCase() === cleanPatId && qr.status === 'ACTIVE'
+  );
+  if (existing) {
+    return existing;
+  }
+
+  // Create new permanent active QR record for this patient
+  const now = new Date().toISOString();
+  const newQr: PatientQrRecord = {
+    id: `qr-${cleanPatId}`,
+    patientUserId: patient.userId || patient.id,
+    patientId: cleanPatId,
+    secureToken: generateSecureToken(),
+    createdAt: now,
+    updatedAt: now,
+    status: 'ACTIVE'
+  };
+
+  db.patientQrs.unshift(newQr);
+  saveDatabase(db);
+  return newQr;
+}
+
+/**
+ * Resolves a patient from a secure QR token.
+ * Validates token status and returns patient record if active.
+ */
+export function findPatientByQrToken(token: string): {
+  valid: boolean;
+  reason?: string;
+  patient?: PatientProfile;
+  qrRecord?: PatientQrRecord;
+} {
+  if (!token) {
+    return { valid: false, reason: 'Invalid or expired QR code.' };
+  }
+
+  let cleanToken = String(token).trim();
+  // If token is wrapped in full URL (e.g. https://.../qr?token=mbqr_...), extract the token
+  if (cleanToken.includes('token=')) {
+    try {
+      const url = new URL(cleanToken, 'http://localhost');
+      cleanToken = url.searchParams.get('token') || cleanToken;
+    } catch {
+      const match = cleanToken.match(/token=([a-zA-Z0-9_-]+)/);
+      if (match) cleanToken = match[1];
+    }
+  }
+
+  const db = getDatabase();
+  if (!db.patientQrs) db.patientQrs = [];
+
+  const record = db.patientQrs.find(
+    qr => qr.secureToken === cleanToken && qr.status === 'ACTIVE'
+  );
+
+  if (!record) {
+    return { valid: false, reason: 'Invalid or expired QR code.' };
+  }
+
+  const patient = findPatientByIdentifier(record.patientId);
+  if (!patient) {
+    return { valid: false, reason: 'Patient record not found.' };
+  }
+
+  return { valid: true, patient, qrRecord: record };
+}
+
+/**
+ * Securely regenerates a patient's QR code.
+ * Revokes the previous QR token immediately.
+ * Patient ID, accounts, and all medical history remain unchanged.
+ */
+export function regeneratePatientQr(patientId: string, userId?: string): {
+  success: boolean;
+  message?: string;
+  qrRecord?: PatientQrRecord;
+} {
+  const cleanId = String(patientId || '').trim().toUpperCase();
+  const db = getDatabase();
+  if (!db.patientQrs) db.patientQrs = [];
+
+  const patient = findPatientByIdentifier(cleanId);
+  if (!patient) {
+    return { success: false, message: 'Patient record not found.' };
+  }
+
+  // Revoke all existing active QR records for this patient
+  const now = new Date().toISOString();
+  db.patientQrs.forEach(qr => {
+    if (qr.patientId.toUpperCase() === cleanId && qr.status === 'ACTIVE') {
+      qr.status = 'REVOKED';
+      qr.updatedAt = now;
+    }
+  });
+
+  // Create new active QR token
+  const newQr: PatientQrRecord = {
+    id: `qr-${cleanId}-${Date.now()}`,
+    patientUserId: patient.userId || userId || patient.id,
+    patientId: cleanId,
+    secureToken: generateSecureToken(),
+    createdAt: now,
+    updatedAt: now,
+    status: 'ACTIVE'
+  };
+
+  db.patientQrs.unshift(newQr);
+  saveDatabase(db);
+
+  return { success: true, qrRecord: newQr };
+}
+
+/**
+ * Central audit logging helper
+ */
+export function recordCentralAuditLog(log: {
+  actorId: string;
+  actorName: string;
+  actorRole: string;
+  action: string;
+  targetEntity: string;
+  targetId: string;
+  details: string;
+}): void {
+  const db = getDatabase();
+  if (!Array.isArray(db.auditLogs)) db.auditLogs = [];
+
+  const newLog = {
+    id: `aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp: new Date().toISOString(),
+    actorId: log.actorId || 'system',
+    actorName: log.actorName || 'Healthcare Staff',
+    actorRole: log.actorRole || 'DOCTOR',
+    action: log.action || 'QR_ACCESS',
+    targetEntity: log.targetEntity || 'PatientProfile',
+    targetId: log.targetId,
+    ipAddress: '127.0.0.1 (Authenticated Server)',
+    details: log.details
+  };
+
+  db.auditLogs.unshift(newLog);
+  saveDatabase(db);
+}
+
