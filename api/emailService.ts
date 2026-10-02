@@ -240,3 +240,13 @@ export async function sendVerificationEmail(
     };
   }
 }
+
+export default async function handler(req: any, res: any) {
+  res.setHeader('Content-Type', 'application/json');
+  return res.status(200).json({
+    success: true,
+    service: 'MediBridge Email Delivery Service',
+    status: 'ONLINE',
+    timestamp: new Date().toISOString()
+  });
+}
