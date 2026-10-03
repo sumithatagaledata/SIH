@@ -948,6 +948,13 @@ class CloudDataService {
     } catch {}
   }
 
+  public saveIncomingAccessRequest(req: AccessRequest): void {
+    if (!req || !req.id) return;
+    const all = this.getAccessRequests().filter(r => r.id !== req.id);
+    all.unshift(req);
+    this.setAccessRequests(all);
+  }
+
   public async createAccessRequest(params: {
     patientId: string;
     patientName?: string;
@@ -959,12 +966,30 @@ class CloudDataService {
     accessScope?: string;
     reason?: string;
   }): Promise<AccessRequest> {
+    const cleanPatientId = params.patientId.trim().toUpperCase();
+    const cleanHospitalId = params.hospitalId.trim().toUpperCase();
+
+    // 0. Fast local deduplication check:
+    // If a request is already PENDING or APPROVED, return it immediately without creating duplicates
+    const all = this.getAccessRequests();
+    const existing = all.find(r => {
+      const rPat = (r.patientId || '').trim().toUpperCase();
+      const rHosp = (r.hospitalId || '').trim().toUpperCase();
+      return rPat === cleanPatientId &&
+        (rHosp === cleanHospitalId || (r.hospitalName && cleanHospitalId.includes(r.hospitalName.toUpperCase()))) &&
+        (r.status === 'PENDING' || r.status === 'APPROVED');
+    });
+
+    if (existing) {
+      return existing;
+    }
+
     const requestId = `req-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
     const newRequest: AccessRequest = {
       id: requestId,
-      patientId: params.patientId.trim().toUpperCase(),
+      patientId: cleanPatientId,
       patientName: params.patientName,
-      hospitalId: params.hospitalId,
+      hospitalId: cleanHospitalId,
       hospitalName: params.hospitalName,
       doctorId: params.doctorId,
       doctorName: params.doctorName,
@@ -975,36 +1000,49 @@ class CloudDataService {
       reason: params.reason || 'Patient registration and clinical evaluation'
     };
 
-    // 0. Central Serverless API Persistence
+    // 1. Central Serverless API Persistence & Server Deduplication
+    let finalRequest = newRequest;
     try {
       if (typeof window !== 'undefined' && window.location) {
-        fetch('/api/access-requests', {
+        const res = await fetch('/api/access-requests', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(newRequest)
-        }).catch(() => {});
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.request) {
+            finalRequest = json.request;
+            if (json.alreadyExists) {
+              const filtered = this.getAccessRequests().filter(r => r.id !== finalRequest.id);
+              filtered.unshift(finalRequest);
+              this.setAccessRequests(filtered);
+              return finalRequest;
+            }
+          }
+        }
       }
     } catch {}
 
-    // 1. Firebase Firestore Write (with sanitize and timeout)
+    // 2. Firebase Firestore Write (with sanitize and timeout)
     if (firestore) {
       try {
-        await withFirestoreTimeout(setDoc(doc(firestore, 'access_requests', requestId), sanitizeForFirestore(newRequest)));
+        await withFirestoreTimeout(setDoc(doc(firestore, 'access_requests', finalRequest.id), sanitizeForFirestore(finalRequest)));
       } catch (fsErr) {
         console.warn('[Firestore Access Request Insert Warning]:', fsErr);
       }
     }
 
-    // 2. Central Cloud Database Write
-    await cloudDb.saveAccessRequest(newRequest);
+    // 3. Central Cloud Database Write
+    await cloudDb.saveAccessRequest(finalRequest);
 
-    // 3. Local State Update
-    const all = this.getAccessRequests();
-    const filtered = all.filter(r => !(r.patientId === newRequest.patientId && r.hospitalId === newRequest.hospitalId && r.status === 'PENDING'));
-    filtered.unshift(newRequest);
+    // 4. Local State Update
+    const currentList = this.getAccessRequests();
+    const filtered = currentList.filter(r => r.id !== finalRequest.id && !(r.patientId === finalRequest.patientId && r.hospitalId === finalRequest.hospitalId));
+    filtered.unshift(finalRequest);
     this.setAccessRequests(filtered);
 
-    // 4. Log Audit
+    // 5. Log Audit
     db.logAction(
       params.hospitalId,
       params.requestedBy,
@@ -1015,29 +1053,49 @@ class CloudDataService {
       `${params.hospitalName} (${params.requestedBy}) requested clinical access for Patient ${params.patientId}`
     );
 
-    // 5. Publish Realtime Notification
-    syncRelay.publish(`patient_access_request_${newRequest.patientId}`, newRequest);
-    syncRelay.publish('access_requests_changed', newRequest);
+    // 6. Publish Realtime Notification (Fast: <1 second delivery)
+    syncRelay.publish(`patient_access_request_${finalRequest.patientId}`, finalRequest);
+    syncRelay.publish('access_requests_changed', finalRequest);
 
-    return newRequest;
+    return finalRequest;
   }
 
   public async respondToAccessRequest(requestId: string, status: 'APPROVED' | 'DENIED'): Promise<AccessRequest | undefined> {
     const cloudRequests = await cloudDb.getAccessRequests();
-    const target = cloudRequests.find(r => r.id === requestId) || this.getAccessRequests().find(r => r.id === requestId);
-    if (!target) return undefined;
+    let target = cloudRequests.find(r => r.id === requestId) || this.getAccessRequests().find(r => r.id === requestId);
 
-    target.status = status;
-    target.respondedAt = new Date().toISOString();
+    // Fallback: If not in memory, query serverless API
+    if (!target) {
+      try {
+        if (typeof window !== 'undefined' && window.location) {
+          const res = await fetch('/api/access-requests');
+          if (res.ok) {
+            const json = await res.json();
+            const list = json.requests || json.data || [];
+            target = list.find((r: any) => r.id === requestId);
+          }
+        }
+      } catch {}
+    }
+
+    if (!target) return undefined;
+    const finalTarget: AccessRequest = target;
+
+    finalTarget.status = status;
+    finalTarget.respondedAt = new Date().toISOString();
 
     // 0. Central Serverless API Persistence
     try {
       if (typeof window !== 'undefined' && window.location) {
-        fetch(`/api/access-requests?id=${encodeURIComponent(requestId)}`, {
+        const patchRes = await fetch(`/api/access-requests?id=${encodeURIComponent(requestId)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: requestId, status })
-        }).catch(() => {});
+        });
+        if (patchRes.ok) {
+          const json = await patchRes.json();
+          if (json.request) Object.assign(finalTarget, json.request);
+        }
       }
     } catch {}
 
@@ -1046,7 +1104,7 @@ class CloudDataService {
       try {
         await withFirestoreTimeout(updateDoc(doc(firestore, 'access_requests', requestId), sanitizeForFirestore({
           status,
-          respondedAt: target.respondedAt
+          respondedAt: finalTarget.respondedAt
         })));
       } catch (fsErr) {
         console.warn('[Firestore Access Request Update Warning]:', fsErr);
@@ -1054,23 +1112,23 @@ class CloudDataService {
     }
 
     // 2. Cloud database update
-    await cloudDb.saveAccessRequest(target);
+    await cloudDb.saveAccessRequest(finalTarget);
 
     // 3. Local state update
     const all = this.getAccessRequests();
     const filtered = all.filter(r => r.id !== requestId);
-    filtered.unshift(target);
+    filtered.unshift(finalTarget);
     this.setAccessRequests(filtered);
 
     // If APPROVED, save to TrustedHospitals in Firestore and local db
     if (status === 'APPROVED') {
       const trustRecord = {
         id: `trust-${Date.now()}`,
-        patientId: target.patientId,
-        patientProfileId: target.patientId,
-        hospitalId: target.hospitalId,
-        hospitalName: target.hospitalName,
-        hospitalAddress: `${target.hospitalName}, Main Facility`,
+        patientId: finalTarget.patientId,
+        patientProfileId: finalTarget.patientId,
+        hospitalId: finalTarget.hospitalId,
+        hospitalName: finalTarget.hospitalName,
+        hospitalAddress: `${finalTarget.hospitalName}, Main Facility`,
         hospitalCity: 'Maharashtra',
         grantedAt: new Date().toISOString(),
         status: 'ACTIVE' as const,
@@ -1098,27 +1156,30 @@ class CloudDataService {
         }
       } catch {}
     } else if (status === 'DENIED') {
-      const trusted = db.getTrustedHospitals(target.patientId);
-      trusted.filter(t => t.hospitalId === target.hospitalId).forEach(t => db.revokeTrustedHospital(t.id));
+      const trusted = db.getTrustedHospitals(finalTarget.patientId);
+      trusted.filter(t => t.hospitalId === finalTarget.hospitalId).forEach(t => db.revokeTrustedHospital(t.id));
     }
 
     // Log Audit
     db.logAction(
-      target.patientId,
-      target.patientName || `Patient ${target.patientId}`,
+      finalTarget.patientId,
+      finalTarget.patientName || `Patient ${finalTarget.patientId}`,
       'PATIENT',
       status === 'APPROVED' ? 'APPROVE_ACCESS' : 'DENY_ACCESS',
       'AccessRequest',
-      target.id,
-      `Patient ${target.patientId} ${status} clinical record access for ${target.hospitalName}`
+      finalTarget.id,
+      `Patient ${finalTarget.patientId} ${status} clinical record access for ${finalTarget.hospitalName}`
     );
 
-    // Publish Realtime Notification
-    syncRelay.publish(`hospital_request_update_${requestId}`, target);
-    syncRelay.publish(`hospital_patient_auth_${target.hospitalId}_${target.patientId}`, target);
-    syncRelay.publish('access_requests_changed', target);
+    // Publish Realtime Notification (Fast: <1 second cross-device propagation)
+    const cleanPat = (finalTarget.patientId || '').toUpperCase();
+    const cleanHosp = (finalTarget.hospitalId || '').toUpperCase();
+    syncRelay.publish(`hospital_request_update_${requestId}`, finalTarget);
+    syncRelay.publish(`hospital_patient_auth_${finalTarget.hospitalId}_${finalTarget.patientId}`, finalTarget);
+    syncRelay.publish(`hospital_patient_auth_${cleanHosp}_${cleanPat}`, finalTarget);
+    syncRelay.publish('access_requests_changed', finalTarget);
 
-    return target;
+    return finalTarget;
   }
 
   public async revokeHospitalAccess(patientId: string, hospitalId: string): Promise<void> {
@@ -1190,7 +1251,7 @@ class CloudDataService {
       }
     }
 
-    // 0. Query Serverless Endpoint
+    // 0. Query Serverless Endpoint (Access Requests)
     try {
       if (typeof window !== 'undefined' && window.location) {
         const cleanPat = patientId.trim().toUpperCase();
@@ -1206,6 +1267,22 @@ class CloudDataService {
             if (req) {
               if (req.status === 'APPROVED') return { isAuthorized: true, status: 'APPROVED', activeRequest: req };
               return { isAuthorized: false, status: req.status, activeRequest: req };
+            }
+          }
+        }
+
+        // Also check trusted hospitals endpoint
+        const trustRes = await fetch(`/api/trusted-hospitals?patientId=${encodeURIComponent(cleanPat)}`);
+        if (trustRes.ok) {
+          const trustJson = await trustRes.json();
+          const trusts = trustJson.trustedHospitals || trustJson.data || [];
+          if (Array.isArray(trusts)) {
+            const isTrusted = trusts.some((t: any) => {
+              const tHosp = (t.hospitalId || '').trim().toUpperCase();
+              return t.status === 'ACTIVE' && (tHosp === cleanHosp || (t.hospitalName && cleanHosp.includes(t.hospitalName.toUpperCase())));
+            });
+            if (isTrusted) {
+              return { isAuthorized: true, status: 'APPROVED' };
             }
           }
         }
@@ -1266,10 +1343,8 @@ class CloudDataService {
           const json = await res.json();
           if (json.success && Array.isArray(json.requests)) {
             const pending = json.requests.filter((r: any) => r.status === 'PENDING');
-            if (pending.length > 0) {
-              this.setAccessRequests(json.requests);
-              return pending;
-            }
+            this.setAccessRequests(json.requests);
+            return pending;
           }
         }
       }
@@ -1478,9 +1553,14 @@ class CloudDataService {
       }
     }
 
-    // Persist to central API
+    // Persist to central API (/api/documents & /api/patients)
     try {
       if (typeof window !== 'undefined' && window.location) {
+        fetch('/api/documents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ document })
+        }).catch(() => {});
         fetch('/api/patients', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

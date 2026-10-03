@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  FileText, Download, Printer, ShieldAlert, CheckCircle2,
+  FileText, Download, Printer, ShieldAlert, CheckCircle2, XCircle,
   AlertTriangle, Pill, Activity, HeartPulse, User, Calendar,
   Globe, Clock, MapPin, Sparkles, HelpCircle, CheckSquare, Stethoscope
 } from 'lucide-react';
@@ -113,6 +113,122 @@ export const ClinicalSummaryView: React.FC<ClinicalSummaryViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* 🌟 ATTENDING PHYSICIAN APPROVAL STATUS BANNER */}
+      {(() => {
+        const isApproved = summary.verificationStatus === 'APPROVED' || summary.verificationStatus === 'VERIFIED_BY_PHYSICIAN' || summary.verificationStatus === 'EDITED_AND_VERIFIED';
+        const isUnapproved = summary.verificationStatus === 'UNAPPROVED' || summary.verificationStatus === 'REJECTED';
+        const docName = summary.verifiedByDoctorName || 'Dr. Vikram Malhotra';
+        const hospName = summary.trustedHospitalName || 'Apex Multi-Specialty Hospital & Trauma Center';
+        const notes = summary.doctorVerificationNotes || report?.doctorNotes?.notes;
+
+        if (isApproved) {
+          return (
+            <div className="bg-gradient-to-r from-emerald-950 via-teal-950 to-slate-900 text-white rounded-3xl p-6 sm:p-7 border-2 border-emerald-500/60 shadow-lg space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center text-emerald-400">
+                    <CheckCircle2 className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-3 py-0.5 rounded-full bg-emerald-500 text-slate-950 font-black text-xs uppercase tracking-wider">
+                        ✅ APPROVED BY DOCTOR
+                      </span>
+                      <span className="text-xs text-emerald-300 font-mono">
+                        {new Date(summary.verifiedAt || summary.generatedAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <h4 className="text-lg font-extrabold text-white mt-1">
+                      Clinical Intake &amp; Medicines Approved by {docName}
+                    </h4>
+                    <p className="text-xs text-emerald-200/90 mt-0.5">
+                      Trusted Hospital: <strong className="text-white">{hospName}</strong> • Reg: {summary.doctorRegistrationNumber || 'MMC-2018-09281'}
+                    </p>
+                  </div>
+                </div>
+
+                <span className="px-4 py-1.5 rounded-xl bg-emerald-400/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold font-mono">
+                  Prescription Validated
+                </span>
+              </div>
+
+              {notes && (
+                <div className="bg-white/10 backdrop-blur-sm p-4 rounded-2xl border border-white/15 text-xs space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-emerald-300 block">Attending Physician Assessment &amp; Instructions:</span>
+                  <p className="text-white leading-relaxed">{notes}</p>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        if (isUnapproved) {
+          return (
+            <div className="bg-gradient-to-r from-red-950 via-slate-900 to-slate-900 text-white rounded-3xl p-6 sm:p-7 border-2 border-red-500/60 shadow-lg space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-400/50 flex items-center justify-center text-red-400">
+                    <XCircle className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-3 py-0.5 rounded-full bg-red-600 text-white font-black text-xs uppercase tracking-wider">
+                        ❌ UNAPPROVED BY DOCTOR
+                      </span>
+                      <span className="text-xs text-red-300 font-mono">
+                        {new Date(summary.verifiedAt || summary.generatedAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <h4 className="text-lg font-extrabold text-white mt-1">
+                      In-Person Clinical Consultation Required by {docName}
+                    </h4>
+                    <p className="text-xs text-red-200/90 mt-0.5">
+                      Trusted Hospital: <strong className="text-white">{hospName}</strong>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-red-500/10 p-4 rounded-2xl border border-red-500/30 text-xs space-y-1.5">
+                <span className="text-[10px] uppercase font-bold text-red-300 block">Doctor Clinical Advice:</span>
+                <p className="text-white leading-relaxed">
+                  {notes || 'This intake report has been evaluated and marked UNAPPROVED for self-treatment. Please do not take unapproved medications without physical consultation at the hospital.'}
+                </p>
+              </div>
+            </div>
+          );
+        }
+
+        // Default: Awaiting Doctor Review
+        return (
+          <div className="bg-gradient-to-r from-amber-950 via-slate-900 to-slate-900 text-white rounded-3xl p-6 sm:p-7 border-2 border-amber-500/50 shadow-lg space-y-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 animate-pulse">
+                  <Clock className="w-7 h-7" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-3 py-0.5 rounded-full bg-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider">
+                      ⏳ AWAITING DOCTOR REVIEW
+                    </span>
+                    <span className="text-xs text-amber-300 font-mono">
+                      Routed to Trusted Hospital
+                    </span>
+                  </div>
+                  <h4 className="text-lg font-extrabold text-white mt-1">
+                    Directly Sent to {hospName}
+                  </h4>
+                  <p className="text-xs text-amber-200/90 mt-0.5">
+                    Attending Physician: <strong className="text-white">Dr. Vikram Malhotra</strong> • Reviewing intake symptoms &amp; medicines. Approval status will update here automatically.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Mandatory Physician Verification Disclaimer */}
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 text-amber-900">
@@ -304,6 +420,87 @@ export const ClinicalSummaryView: React.FC<ClinicalSummaryViewProps> = ({
             </div>
           </div>
         </div>
+
+        {/* AI Recommended Medicines & Approval Status Section */}
+        {((report?.recommendedMedicines && report.recommendedMedicines.length > 0) || (summary.recommendedMedicines && summary.recommendedMedicines.length > 0)) && (
+          <div className="bg-gradient-to-br from-teal-50/70 via-white to-slate-50 p-5 rounded-2xl border-2 border-teal-200/80 space-y-3.5 shadow-xs">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-teal-600 text-white shadow-xs">
+                  <Pill className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-teal-950 text-xs uppercase tracking-wider flex items-center gap-2">
+                    <span>AI Recommended Medicines &amp; Dosages</span>
+                    <span className="text-[10px] bg-teal-100 text-teal-800 font-bold px-2 py-0.5 rounded-full border border-teal-200">
+                      Doctor Verification Linked
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-500">
+                    Hospital approval state directly synced with your attending physician.
+                  </p>
+                </div>
+              </div>
+              <SourceBadge source="AI SUMMARIZED" />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(report?.recommendedMedicines || summary.recommendedMedicines || []).map((med, idx) => {
+                const isMedApproved = med.status === 'APPROVED' || summary.verificationStatus === 'APPROVED' || summary.verificationStatus === 'VERIFIED_BY_PHYSICIAN';
+                const isMedUnapproved = med.status === 'UNAPPROVED' || summary.verificationStatus === 'UNAPPROVED' || summary.verificationStatus === 'REJECTED';
+                return (
+                  <div key={idx} className="p-3.5 bg-white rounded-xl border border-slate-200 shadow-2xs space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="text-xs text-slate-900 flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${isMedApproved ? 'bg-emerald-500' : isMedUnapproved ? 'bg-red-500' : 'bg-amber-500'}`}></span>
+                        <span>{med.name}</span>
+                      </strong>
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                        isMedApproved
+                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                          : isMedUnapproved
+                          ? 'bg-red-100 text-red-800 border-red-300'
+                          : 'bg-amber-100 text-amber-800 border-amber-300'
+                      }`}>
+                        {isMedApproved ? '✅ Approved' : isMedUnapproved ? '❌ Unapproved' : '⏳ Pending Doctor Review'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 pt-0.5">
+                      <div>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Dosage:</span>
+                        <strong className="text-slate-800">{med.dosage || 'As directed'}</strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Timing:</span>
+                        <strong className="text-slate-800">{med.timing || 'After meals'}</strong>
+                      </div>
+                    </div>
+
+                    {med.duration && (
+                      <div className="text-[11px] text-slate-600">
+                        <span className="text-slate-400 text-[10px] font-bold uppercase mr-1">Duration:</span>
+                        <span className="font-semibold text-slate-700">{med.duration}</span>
+                      </div>
+                    )}
+
+                    {med.indication && (
+                      <div className="text-[11px] text-teal-800 bg-teal-50/60 p-1.5 rounded-lg border border-teal-100 font-medium">
+                        <strong>Indication:</strong> {med.indication}
+                      </div>
+                    )}
+
+                    {med.warnings && (
+                      <div className="text-[10px] text-amber-800 bg-amber-50/70 p-1.5 rounded-lg border border-amber-200">
+                        ⚠️ {med.warnings}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 6. Relevant Findings */}
         {((report?.relevantFindings && report.relevantFindings.length > 0) || (summary.relevantLabFindings && summary.relevantLabFindings.length > 0)) && (

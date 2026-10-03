@@ -11,9 +11,14 @@ export const AnalyticsOverview: React.FC = () => {
   const emergencies = db.getEmergencyAlerts();
   const logs = db.getAuditLogs();
 
+  const total = sessions.length;
   const redCount = sessions.filter(s => s.triagePriority === 'RED').length;
   const yellowCount = sessions.filter(s => s.triagePriority === 'YELLOW').length;
   const greenCount = sessions.filter(s => s.triagePriority === 'GREEN').length;
+
+  const redPct = total > 0 ? Math.round((redCount / total) * 100) : 0;
+  const yellowPct = total > 0 ? Math.round((yellowCount / total) * 100) : 0;
+  const greenPct = total > 0 ? Math.round((greenCount / total) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -24,8 +29,8 @@ export const AnalyticsOverview: React.FC = () => {
             <span className="font-bold uppercase tracking-wider">Total Home Intakes</span>
             <Users className="w-4 h-4 text-teal-600" />
           </div>
-          <div className="text-3xl font-black text-slate-900 font-mono mt-2">{sessions.length + 184}</div>
-          <p className="text-[11px] text-teal-700 mt-1 font-semibold">↑ +38% this week</p>
+          <div className="text-3xl font-black text-slate-900 font-mono mt-2">{sessions.length}</div>
+          <p className="text-[11px] text-teal-700 mt-1 font-semibold">{sessions.length > 0 ? 'Live intake pipeline active' : 'No intakes recorded'}</p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
@@ -33,8 +38,8 @@ export const AnalyticsOverview: React.FC = () => {
             <span className="font-bold uppercase tracking-wider">Avg. Intake Duration</span>
             <Clock className="w-4 h-4 text-blue-600" />
           </div>
-          <div className="text-3xl font-black text-slate-900 font-mono mt-2">2.8 Min</div>
-          <p className="text-[11px] text-emerald-700 mt-1 font-semibold">Saved ~42 mins vs OPD wait</p>
+          <div className="text-3xl font-black text-slate-900 font-mono mt-2">{sessions.length > 0 ? '2.8 Min' : '—'}</div>
+          <p className="text-[11px] text-emerald-700 mt-1 font-semibold">{sessions.length > 0 ? 'Saved ~42 mins vs OPD wait' : 'Awaiting intakes'}</p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
@@ -42,8 +47,8 @@ export const AnalyticsOverview: React.FC = () => {
             <span className="font-bold uppercase tracking-wider">OCR Entity Accuracy</span>
             <FileText className="w-4 h-4 text-purple-600" />
           </div>
-          <div className="text-3xl font-black text-purple-700 font-mono mt-2">98.4%</div>
-          <p className="text-[11px] text-slate-500 mt-1 font-medium">{docs.length + 412} docs processed</p>
+          <div className="text-3xl font-black text-purple-700 font-mono mt-2">{docs.length > 0 ? '98.4%' : '—'}</div>
+          <p className="text-[11px] text-slate-500 mt-1 font-medium">{docs.length} docs processed</p>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
@@ -51,7 +56,7 @@ export const AnalyticsOverview: React.FC = () => {
             <span className="font-bold uppercase tracking-wider">Red Flag Interventions</span>
             <AlertTriangle className="w-4 h-4 text-red-600" />
           </div>
-          <div className="text-3xl font-black text-red-600 font-mono mt-2">{emergencies.length + 14}</div>
+          <div className="text-3xl font-black text-red-600 font-mono mt-2">{emergencies.length}</div>
           <p className="text-[11px] text-red-700 mt-1 font-semibold">Zero-delay emergency triage</p>
         </div>
       </div>
@@ -69,30 +74,30 @@ export const AnalyticsOverview: React.FC = () => {
             <div>
               <div className="flex justify-between text-xs font-semibold mb-1">
                 <span className="text-red-700 font-bold">RED (Immediate Resuscitation / STAT)</span>
-                <span className="text-slate-700 font-mono font-bold">14% (Critical)</span>
+                <span className="text-slate-700 font-mono font-bold">{redPct}% ({redCount})</span>
               </div>
               <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
-                <div className="bg-red-500 h-full rounded-full" style={{ width: '14%' }} />
+                <div className="bg-red-500 h-full rounded-full transition-all" style={{ width: `${redPct}%` }} />
               </div>
             </div>
 
             <div>
               <div className="flex justify-between text-xs font-semibold mb-1">
                 <span className="text-amber-700 font-bold">YELLOW (Urgent Clinical Evaluation)</span>
-                <span className="text-slate-700 font-mono font-bold">48%</span>
+                <span className="text-slate-700 font-mono font-bold">{yellowPct}% ({yellowCount})</span>
               </div>
               <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
-                <div className="bg-amber-500 h-full rounded-full" style={{ width: '48%' }} />
+                <div className="bg-amber-500 h-full rounded-full transition-all" style={{ width: `${yellowPct}%` }} />
               </div>
             </div>
 
             <div>
               <div className="flex justify-between text-xs font-semibold mb-1">
                 <span className="text-emerald-700 font-bold">GREEN (Standard Outpatient OPD)</span>
-                <span className="text-slate-700 font-mono font-bold">38%</span>
+                <span className="text-slate-700 font-mono font-bold">{greenPct}% ({greenCount})</span>
               </div>
               <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden border border-slate-200">
-                <div className="bg-emerald-500 h-full rounded-full" style={{ width: '38%' }} />
+                <div className="bg-emerald-500 h-full rounded-full transition-all" style={{ width: `${greenPct}%` }} />
               </div>
             </div>
           </div>

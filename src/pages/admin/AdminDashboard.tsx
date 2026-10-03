@@ -316,6 +316,44 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const handleClearAllPatients = async () => {
+    if (!window.confirm('⚠️ Are you sure you want to remove ALL registered patients? This will wipe all patient accounts, clinical intake records, and uploaded documents while keeping registered hospital and doctor accounts fully intact.')) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await centralAuthService.clearAllPatientRegistrations();
+      await loadAdminData();
+      alert('✅ All registered patient records and clinical data have been cleared. Hospital and Doctor accounts remain active.');
+    } catch (err) {
+      console.error('Error clearing patient data:', err);
+      alert('Failed to clear patient registrations.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeletePatient = async (p: PatientProfile, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`⚠️ Are you sure you want to remove registered patient "${p.fullName || p.patientId}" (${p.patientId})? This will permanently delete this patient record and associated clinical intake.`)) {
+      return;
+    }
+    setIsLoading(true);
+    try {
+      await fetch(`/api/patients?patientId=${encodeURIComponent(p.patientId)}`, {
+        method: 'DELETE'
+      });
+      cloudDb.deletePatient(p.patientId);
+      await loadAdminData();
+      alert(`✅ Patient ${p.fullName || p.patientId} has been removed.`);
+    } catch (err) {
+      console.error('Error deleting patient:', err);
+      alert('Failed to remove patient.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Filtered queries
   const filteredPatients = patients.filter(p => {
     if (!patientSearch.trim()) return true;
@@ -371,6 +409,15 @@ export const AdminDashboard: React.FC = () => {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>Refresh Data</span>
+          </button>
+          <button
+            onClick={handleClearAllPatients}
+            disabled={isLoading || patients.length === 0}
+            className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition flex items-center gap-2 border border-amber-200 shadow-sm"
+            title="Clear all registered Patients only, keeping Hospital and Doctor accounts intact"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Clear All Patients</span>
           </button>
           <button
             onClick={handleClearAllRegistrations}
@@ -477,8 +524,18 @@ export const AdminDashboard: React.FC = () => {
                 Total Registered: <strong className="text-slate-900 font-mono">{patients.length}</strong> • Click any patient row to open full medical profile.
               </p>
             </div>
-            <div className="w-full sm:w-80">
-              <form onSubmit={handleSearchPatientSubmit} className="relative">
+            <div className="w-full sm:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                type="button"
+                onClick={handleClearAllPatients}
+                disabled={isLoading || patients.length === 0}
+                className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border border-red-200 shadow-sm disabled:opacity-50 cursor-pointer"
+                title="Remove all registered patient records"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Remove All Patients</span>
+              </button>
+              <form onSubmit={handleSearchPatientSubmit} className="relative sm:w-72">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -557,12 +614,22 @@ export const AdminDashboard: React.FC = () => {
                         {p.createdAt ? new Date(p.createdAt).toLocaleDateString() : 'Recent'}
                       </td>
                       <td className="py-3.5 px-3 text-right">
-                        <button
-                          type="button"
-                          className="px-3 py-1 bg-slate-100 hover:bg-teal-600 hover:text-white text-slate-700 rounded-lg text-xs font-bold transition"
-                        >
-                          View Details
-                        </button>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            className="px-3 py-1 bg-slate-100 hover:bg-teal-600 hover:text-white text-slate-700 rounded-lg text-xs font-bold transition"
+                          >
+                            View Details
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeletePatient(p, e)}
+                            className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg text-xs font-bold transition border border-red-200"
+                            title={`Delete patient ${p.fullName || p.patientId}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

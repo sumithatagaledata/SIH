@@ -30,7 +30,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onDocumentPr
     setIsUploading(true);
     showToast('OCR Processing', `Extracting medical entities and uploading ${file.name}...`, 'INFO');
 
-    const patientId = patientProfile?.patientId || currentUser?.patientId || (currentUser ? db.getPatientByUserId(currentUser.id)?.patientId : '') || 'MB-2026-ACTIVE';
+    const patientId = patientProfile?.patientId || currentUser?.patientId || (currentUser ? db.getPatientByUserId(currentUser.id)?.patientId : '') || '';
 
     try {
       // 1. Run local/AI OCR extraction
@@ -117,7 +117,7 @@ export const DocumentUploader: React.FC<DocumentUploaderProps> = ({ onDocumentPr
     }
   };
 
-  const patientId = patientProfile?.patientId || currentUser?.patientId || (currentUser ? db.getPatientByUserId(currentUser.id)?.patientId : '') || 'MB-2026-ACTIVE';
+  const patientId = patientProfile?.patientId || currentUser?.patientId || (currentUser ? db.getPatientByUserId(currentUser.id)?.patientId : '') || '';
   const existingDocs = db.getDocuments(patientId);
 
   return (

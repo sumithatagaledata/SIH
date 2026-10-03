@@ -4,7 +4,7 @@ import {
   CheckCircle2, Activity, Filter, Search, Siren, KeyRound,
   FileText, ArrowRight, Lock, AlertCircle, ShieldAlert,
   Phone, User, Calendar, FileSpreadsheet, Eye, Pill, Tag,
-  Check, XCircle, Sparkles, MapPin, HeartPulse, Building2, QrCode, Download
+  Check, XCircle, Sparkles, MapPin, HeartPulse, Building2, Download
 } from 'lucide-react';
 
 import { useAuth } from '../../context/AuthContext';
@@ -12,11 +12,10 @@ import { useNotification } from '../../context/NotificationContext';
 import { PreArrivalQueue } from '../../components/doctor/PreArrivalQueue';
 import { ClinicalReviewPanel } from '../../components/doctor/ClinicalReviewPanel';
 import { SharedPatientsPanel } from '../../components/doctor/SharedPatientsPanel';
-import { PatientQrScanner } from '../../components/doctor/PatientQrScanner';
 import { db } from '../../services/mockDatabase';
-import { cloudDataService } from '../../services/firebaseService';
+import { cloudDataService, syncRelay } from '../../services/firebaseService';
 import { cloudDb } from '../../services/cloudDatabaseEngine';
-import { ClinicalSession, PatientProfile, MedicalDocument, TimelineEvent, Appointment } from '../../types';
+import { ClinicalSession, PatientProfile, MedicalDocument, TimelineEvent, Appointment, EmergencyAlert } from '../../types';
 import { Modal } from '../../components/common/Modal';
 import { DocumentViewerModal } from '../../components/common/DocumentViewerModal';
 
@@ -28,7 +27,90 @@ export const DoctorDashboard: React.FC = () => {
   const [aptStatusFilter, setAptStatusFilter] = useState<string>('ALL');
   const [aptDateFilter, setAptDateFilter] = useState<string>('ALL');
 
-  const [activeTab, setActiveTab] = useState<'QUEUE' | 'SEARCH' | 'QR_SCAN' | 'SHARED_PATIENTS' | 'APPOINTMENTS'>(() => {
+  const doctorHospitalId = doctorProfile?.hospitalId || hospitalAccount?.id || (hospitalAccount as any)?.hospitalId || 'HOSP-2026-92401';
+  const doctorHospitalName = doctorProfile?.hospitalName || hospitalAccount?.hospitalName || 'Moraya General Hospital';
+
+  // Active Emergency Red Flag Alerts for this doctor's hospital
+  const [activeEmergencies, setActiveEmergencies] = useState<EmergencyAlert[]>([]);
+
+  const fetchDoctorHospitalEmergencies = React.useCallback(async () => {
+    const cleanHospId = (doctorHospitalId || '').trim();
+    if (!cleanHospId) return;
+
+    const localAlerts = db.getEmergencyAlerts(cleanHospId).filter(e => e.status !== 'RESOLVED');
+
+    try {
+      const res = await fetch(`/api/emergencies?hospitalId=${encodeURIComponent(cleanHospId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.emergencies && Array.isArray(json.emergencies)) {
+          const apiAlerts: EmergencyAlert[] = json.emergencies.filter(
+            (e: EmergencyAlert) => e.status !== 'RESOLVED' &&
+            ((e.hospitalId || '').toUpperCase() === cleanHospId.toUpperCase() ||
+             (e.hospitalName && doctorHospitalName && e.hospitalName.toLowerCase() === doctorHospitalName.toLowerCase()))
+          );
+          const map = new Map<string, EmergencyAlert>();
+          localAlerts.forEach(a => map.set(a.id, a));
+          apiAlerts.forEach(a => map.set(a.id, a));
+          const merged = Array.from(map.values()).sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          setActiveEmergencies(merged);
+          return;
+        }
+      }
+    } catch {}
+
+    setActiveEmergencies(localAlerts);
+  }, [doctorHospitalId, doctorHospitalName]);
+
+  useEffect(() => {
+    fetchDoctorHospitalEmergencies();
+
+    const cleanHospId = (doctorHospitalId || '').trim();
+    if (!cleanHospId) return;
+
+    const handleUpdate = () => {
+      fetchDoctorHospitalEmergencies();
+    };
+
+    window.addEventListener('medibridge_db_update', handleUpdate);
+    window.addEventListener('medibridge_cloud_sync', handleUpdate);
+
+    // Dedicated hospital emergency channel
+    const unsubHospChannel = syncRelay.subscribe(`hospital_emergency_${cleanHospId}`, (incomingAlert: any) => {
+      if (incomingAlert && ((incomingAlert.hospitalId || '').toUpperCase() === cleanHospId.toUpperCase())) {
+        setActiveEmergencies(prev => {
+          if (prev.some(a => a.id === incomingAlert.id)) {
+            return prev.map(a => a.id === incomingAlert.id ? incomingAlert : a);
+          }
+          return [incomingAlert, ...prev];
+        });
+        showToast('🚨 INCOMING RED FLAG EMERGENCY', `Live emergency alert received for Patient ${incomingAlert.patientId || incomingAlert.patientName}!`, 'TRIAGE');
+      }
+    });
+
+    const unsubGlobalDispatched = syncRelay.subscribe('emergency_alert_dispatched', (incomingAlert: any) => {
+      if (incomingAlert && ((incomingAlert.hospitalId || '').toUpperCase() === cleanHospId.toUpperCase() ||
+          (incomingAlert.hospitalName && doctorHospitalName && incomingAlert.hospitalName.toLowerCase() === doctorHospitalName.toLowerCase()))) {
+        setActiveEmergencies(prev => {
+          if (prev.some(a => a.id === incomingAlert.id)) {
+            return prev.map(a => a.id === incomingAlert.id ? incomingAlert : a);
+          }
+          return [incomingAlert, ...prev];
+        });
+      }
+    });
+
+    return () => {
+      window.removeEventListener('medibridge_db_update', handleUpdate);
+      window.removeEventListener('medibridge_cloud_sync', handleUpdate);
+      unsubHospChannel();
+      unsubGlobalDispatched();
+    };
+  }, [doctorHospitalId, doctorHospitalName, fetchDoctorHospitalEmergencies]);
+
+  const [activeTab, setActiveTab] = useState<'QUEUE' | 'SEARCH' | 'SHARED_PATIENTS' | 'APPOINTMENTS'>(() => {
     // Default to SHARED_PATIENTS tab if user is a hospital portal admin with no doctor profile
     return hospitalAccount && !doctorProfile ? 'SHARED_PATIENTS' : 'QUEUE';
   });
@@ -62,6 +144,22 @@ export const DoctorDashboard: React.FC = () => {
       setSessions(db.getClinicalSessions());
       setAppointments(db.getAppointments());
     }).catch(() => {});
+
+    // Fetch fresh central appointments
+    const fetchApiAppts = async () => {
+      try {
+        const cleanHosp = doctorProfile?.hospitalId || hospitalAccount?.id || '';
+        const res = await fetch(`/api/appointments?hospitalId=${encodeURIComponent(cleanHosp)}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.appointments && Array.isArray(json.appointments)) {
+            json.appointments.forEach((a: Appointment) => db.addAppointment(a));
+            setAppointments(db.getAppointments());
+          }
+        }
+      } catch {}
+    };
+    fetchApiAppts();
 
     const handleDbUpdate = () => {
       setSessions(db.getClinicalSessions());
@@ -200,7 +298,7 @@ export const DoctorDashboard: React.FC = () => {
       patient = db.getPatientByPatientId(trimmed) || db.getPatientById(trimmed);
     }
     if (patient) {
-      await loadPatientDossier(patient);
+      await loadPatientDossier(patient, true);
     }
   };
 
@@ -340,15 +438,6 @@ export const DoctorDashboard: React.FC = () => {
             <span>Lookup Patient by ID</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab('QR_SCAN')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
-              activeTab === 'QR_SCAN' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <QrCode className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Scan Patient QR</span>
-          </button>
 
           <button
             onClick={() => setActiveTab('SHARED_PATIENTS')}
@@ -371,6 +460,140 @@ export const DoctorDashboard: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* ── Live Verified Red Flag Emergency Alert Banner ─────────────────── */}
+      {activeEmergencies.length > 0 && (
+        <div className="space-y-4">
+          {activeEmergencies.map((alert) => (
+            <div
+              key={alert.id}
+              className="bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white rounded-3xl p-5 sm:p-6 shadow-xl border-2 border-red-300 relative overflow-hidden"
+            >
+              <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+                <div className="space-y-2 flex-1">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="px-3 py-1 bg-white text-red-700 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
+                      <Siren className="w-4 h-4 text-red-600 animate-pulse" />
+                      <span>🚨 Incoming Red Flag Emergency Alert</span>
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-black/40 text-yellow-300 border border-yellow-300/40 rounded-md text-xs font-mono font-black uppercase tracking-wider">
+                      Severity: {alert.severity || 'CRITICAL'}
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-black/25 text-white/90 rounded-md text-xs font-mono">
+                      Status: {alert.status}
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-black/25 text-white/90 rounded-md text-xs font-mono">
+                      Hospital: {alert.hospitalName || doctorHospitalName}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 text-xs">
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Patient ID:</span>
+                      <span className="font-mono font-black text-sm text-yellow-300 block">{alert.patientId}</span>
+                      <span className="block text-white/85 text-[11px] truncate font-medium">{alert.patientName}</span>
+                    </div>
+
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Case ID:</span>
+                      <span className="font-mono font-black text-sm text-white block truncate">{alert.caseId || alert.sessionId || 'N/A'}</span>
+                      <span className="block text-white/85 text-[11px]">Intake Session Reference</span>
+                    </div>
+
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Timestamp:</span>
+                      <span className="font-mono text-white text-xs block font-bold">
+                        {new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className="text-white/75 text-[10px]">
+                        {new Date(alert.timestamp).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Live / Current Location:</span>
+                      <div className="flex items-center gap-1.5 text-white font-semibold">
+                        <MapPin className="w-3.5 h-3.5 text-yellow-300 flex-shrink-0" />
+                        <span className="truncate text-xs">
+                          {alert.liveLocation?.address || alert.liveLocation?.city || 'Live GPS Telemetry'}
+                        </span>
+                      </div>
+                      {alert.liveLocation?.lat && alert.liveLocation?.lng && (
+                        <span className="font-mono text-[10px] text-yellow-200 block mt-0.5">
+                          📍 {alert.liveLocation.lat.toFixed(4)}°, {alert.liveLocation.lng.toFixed(4)}°
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Red Flag Details */}
+                  <div className="bg-black/35 p-3 rounded-2xl border border-white/15 mt-2 text-xs">
+                    <span className="text-yellow-300 font-bold block mb-1 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-yellow-300" />
+                      <span>Triggered Red-Flag Symptoms &amp; Details:</span>
+                    </span>
+                    <p className="text-white font-medium leading-relaxed">
+                      {alert.redFlagDetails || (alert.redFlags && alert.redFlags.length > 0 ? alert.redFlags.join(', ') : alert.triggerReason) || 'Acute clinical red flag criteria triggered during AI intake.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Emergency Action Buttons */}
+                <div className="flex lg:flex-col items-center gap-2 self-stretch lg:self-center justify-end">
+                  <button
+                    onClick={() => {
+                      const cleanPatId = alert.patientId;
+                      handleOpenPatientFromAppointment(cleanPatId);
+                    }}
+                    className="px-4 py-2.5 bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 flex-1 lg:flex-initial justify-center cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>View Patient Record</span>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const updated = { ...alert, status: 'ACKNOWLEDGED' as const };
+                      db.saveEmergencyAlert(updated);
+                      await cloudDb.saveEmergencyAlert(updated);
+                      try {
+                        await fetch('/api/emergencies', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: alert.id, status: 'ACKNOWLEDGED' })
+                        });
+                      } catch {}
+                      fetchDoctorHospitalEmergencies();
+                      showToast('Acknowledged', `Emergency alert for patient ${alert.patientId} acknowledged by attending physician.`, 'TRIAGE');
+                    }}
+                    className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 flex-1 lg:flex-initial justify-center cursor-pointer"
+                  >
+                    <span>Acknowledge</span>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const updated = { ...alert, status: 'RESOLVED' as const, resolvedAt: new Date().toISOString() };
+                      db.saveEmergencyAlert(updated);
+                      await cloudDb.saveEmergencyAlert(updated);
+                      try {
+                        await fetch('/api/emergencies', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: alert.id, status: 'RESOLVED', resolvedAt: updated.resolvedAt })
+                        });
+                      } catch {}
+                      fetchDoctorHospitalEmergencies();
+                      showToast('Resolved', `Emergency alert marked as resolved.`, 'INFO');
+                    }}
+                    className="px-3 py-2 bg-black/40 hover:bg-black/60 text-white/80 hover:text-white text-xs rounded-xl transition flex items-center gap-1 justify-center cursor-pointer"
+                  >
+                    <span>Dismiss</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Patient Search Section */}
       {activeTab === 'SEARCH' && (
@@ -819,19 +1042,6 @@ export const DoctorDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Patient QR Scanner Section */}
-      {activeTab === 'QR_SCAN' && (
-        <PatientQrScanner
-          onPatientLoaded={async (patient, isAuthorized) => {
-            await loadPatientDossier(patient, isAuthorized);
-            setActiveTab('SEARCH');
-          }}
-          onRequestEmergencyAccess={(patient) => {
-            setBreakGlassPatient(patient);
-            setShowBreakGlassModal(true);
-          }}
-        />
-      )}
 
       {/* Shared Patients View */}
       {activeTab === 'SHARED_PATIENTS' && (

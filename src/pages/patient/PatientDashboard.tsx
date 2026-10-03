@@ -3,7 +3,7 @@ import {
   Mic, FileText, Clock, Building2, ShieldCheck,
   Siren, User, Activity, AlertTriangle, ArrowRight,
   Sparkles, CheckCircle2, Download, Phone, MapPin,
-  Heart, AlertCircle, Hospital, Ban, Square, QrCode
+  Heart, AlertCircle, Hospital, Ban, Square, XCircle
 } from 'lucide-react';
 
 import { useAuth } from '../../context/AuthContext';
@@ -17,7 +17,6 @@ import { EmergencyStatusCard, EmergencyAudioService } from '../../components/pat
 import { ConsentManager } from '../../components/patient/ConsentManager';
 import { AppointmentBooker } from '../../components/patient/AppointmentBooker';
 import { TrustedHospitalsManager } from '../../components/patient/TrustedHospitalsManager';
-import { PatientQrCard } from '../../components/patient/PatientQrCard';
 import { db } from '../../services/mockDatabase';
 import { cloudDataService, syncRelay } from '../../services/firebaseService';
 import { AccessRequest, ClinicalSession } from '../../types';
@@ -37,10 +36,17 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
   const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([]);
   const [processedRequestIds, setProcessedRequestIds] = useState<Set<string>>(new Set());
 
+  const resolvedPatientId = (
+    patientProfile?.patientId ||
+    currentUser?.patientId ||
+    (currentUser ? db.getPatientByUserId(currentUser.id)?.patientId : '') ||
+    patientProfile?.id ||
+    ''
+  ).trim().toUpperCase();
+
   const loadPendingRequests = async () => {
-    const pId = patientProfile?.patientId || patientProfile?.id;
-    if (pId) {
-      const reqs = await cloudDataService.getPendingRequestsForPatient(pId);
+    if (resolvedPatientId) {
+      const reqs = await cloudDataService.getPendingRequestsForPatient(resolvedPatientId);
       setPendingRequests(reqs.filter(r => !processedRequestIds.has(r.id) && r.status === 'PENDING'));
     }
   };
@@ -61,7 +67,7 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
 
   const checkEmergencyAlerts = () => {
     const alerts = db.getEmergencyAlerts();
-    const pId = patientProfile?.patientId || patientProfile?.id || (currentUser ? `pat-${currentUser.id}` : '');
+    const pId = resolvedPatientId || (currentUser ? `pat-${currentUser.id}` : '');
     const active = alerts.find(a =>
       (a.patientId === pId || a.patientName === currentUser?.fullName) &&
       a.status !== 'RESOLVED' && a.status !== 'HANDOVER_COMPLETED'
@@ -89,24 +95,52 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
     checkEmergencyAlerts();
     loadPendingRequests();
 
-    const pId = patientProfile?.patientId || patientProfile?.id;
     let unsub1: (() => void) | undefined;
     let unsub2: (() => void) | undefined;
+    let unsubSession1: (() => void) | undefined;
+    let unsubSession2: (() => void) | undefined;
 
-    if (pId) {
-      unsub1 = syncRelay.subscribe(`patient_access_request_${pId}`, (req: AccessRequest) => {
+    if (resolvedPatientId) {
+      unsub1 = syncRelay.subscribe(`patient_access_request_${resolvedPatientId}`, (req: AccessRequest) => {
+        cloudDataService.saveIncomingAccessRequest(req);
         setPendingRequests(prev => {
-          const exists = prev.some(r => r.id === req.id);
+          const exists = prev.some(r => r.id === req.id || ((r.hospitalId === req.hospitalId || (r.hospitalName && req.hospitalName && r.hospitalName === req.hospitalName)) && r.status === 'PENDING'));
           return exists ? prev : [req, ...prev];
         });
       });
       unsub2 = syncRelay.subscribe('access_requests_changed', () => {
         loadPendingRequests();
       });
+
+      unsubSession1 = syncRelay.subscribe(`patient_session_update_${resolvedPatientId}`, (updatedSession: ClinicalSession) => {
+        db.saveClinicalSession(updatedSession);
+        setPatientSessions(prev => {
+          const filtered = prev.filter(s => s.id !== updatedSession.id);
+          return [updatedSession, ...filtered];
+        });
+        setActiveSession(prev => (prev?.id === updatedSession.id || !prev ? updatedSession : prev));
+        if (updatedSession.verificationStatus === 'APPROVED') {
+          showToast('Doctor Approved!', `Dr. Vikram Malhotra approved your clinical report & recommended medicines.`, 'VERIFICATION');
+        } else if (updatedSession.verificationStatus === 'UNAPPROVED') {
+          showToast('Consultation Required', `Doctor marked report as unapproved. In-person clinical exam required.`, 'TRIAGE');
+        }
+      });
     }
 
+    unsubSession2 = syncRelay.subscribe('clinical_session_updated', (updatedSession: ClinicalSession) => {
+      const pId = patientProfile?.patientId || resolvedPatientId;
+      if (updatedSession.patientId === pId || updatedSession.patientName === currentUser?.fullName) {
+        db.saveClinicalSession(updatedSession);
+        setPatientSessions(prev => {
+          const filtered = prev.filter(s => s.id !== updatedSession.id);
+          return [updatedSession, ...filtered];
+        });
+        setActiveSession(prev => (prev?.id === updatedSession.id || !prev ? updatedSession : prev));
+      }
+    });
+
     const refreshSessions = () => {
-      const pId = patientProfile?.patientId || patientProfile?.id;
+      const pId = patientProfile?.patientId || patientProfile?.id || resolvedPatientId;
       const sessions = db.getClinicalSessions().filter(s =>
         (pId && (s.patientId === pId || s.patientId === patientProfile?.id || s.patientId === patientProfile?.patientId)) ||
         s.patientName === currentUser?.fullName
@@ -136,6 +170,8 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
       clearInterval(pollInterval);
       unsub1?.();
       unsub2?.();
+      unsubSession1?.();
+      unsubSession2?.();
       window.removeEventListener('medibridge_db_update', handleUpdate);
       window.removeEventListener('medibridge_cloud_sync', handleUpdate);
       window.removeEventListener('medibridge_db_reset', handleUpdate);
@@ -218,14 +254,6 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
       icon: ShieldCheck,
       badge: t('booking_badge'),
       color: 'from-emerald-600 to-teal-700 text-white'
-    },
-    {
-      id: 'qr-code',
-      title: 'My Medical QR',
-      subtitle: 'Official digital pass & QR record',
-      icon: QrCode,
-      badge: 'Digital Pass',
-      color: 'from-blue-600 to-indigo-700 text-white'
     }
   ];
 
@@ -360,7 +388,7 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <div className="flex items-center gap-1.5 bg-teal-50 text-teal-800 border border-teal-200 px-3 py-1 rounded-lg">
                 <span className="text-xs font-mono font-bold">
-                  Patient ID: {patientProfile?.patientId || 'MB-2026-ACTIVE'}
+                  Patient ID: {resolvedPatientId || patientProfile?.patientId || currentUser?.patientId || 'Pending Registration'}
                 </span>
                 {patientProfile?.patientId && (
                   <button
@@ -379,15 +407,6 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
               <span className="text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 font-mono">
                 ABHA: {patientProfile?.abhaId || '91-XXXX-XXXX-XXXX'}
               </span>
-              <button
-                type="button"
-                onClick={() => setActiveTab('qr-code')}
-                className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer"
-                title="View My Medical QR"
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                <span>My Medical QR</span>
-              </button>
             </div>
           </div>
         </div>
@@ -411,12 +430,90 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
         </div>
       </div>
 
+      {/* Real-Time Attending Physician Report Approval Status Banner */}
+      {activeSession && (
+        <div className={`p-5 rounded-3xl border transition shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+          activeSession.verificationStatus === 'APPROVED'
+            ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
+            : activeSession.verificationStatus === 'UNAPPROVED'
+            ? 'bg-red-50/90 border-red-300 text-red-950'
+            : 'bg-amber-50/90 border-amber-300 text-amber-950'
+        }`}>
+          <div className="flex items-center gap-3.5">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-sm ${
+              activeSession.verificationStatus === 'APPROVED'
+                ? 'bg-emerald-600 text-white shadow-emerald-600/20'
+                : activeSession.verificationStatus === 'UNAPPROVED'
+                ? 'bg-red-600 text-white shadow-red-600/20'
+                : 'bg-amber-500 text-white shadow-amber-500/20 animate-pulse'
+            }`}>
+              {activeSession.verificationStatus === 'APPROVED' ? (
+                <CheckCircle2 className="w-6 h-6" />
+              ) : activeSession.verificationStatus === 'UNAPPROVED' ? (
+                <XCircle className="w-6 h-6" />
+              ) : (
+                <Clock className="w-6 h-6" />
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border ${
+                  activeSession.verificationStatus === 'APPROVED'
+                    ? 'bg-emerald-200 text-emerald-900 border-emerald-300'
+                    : activeSession.verificationStatus === 'UNAPPROVED'
+                    ? 'bg-red-200 text-red-900 border-red-300'
+                    : 'bg-amber-200 text-amber-950 border-amber-300'
+                }`}>
+                  {activeSession.verificationStatus === 'APPROVED'
+                    ? '✅ Doctor Approved'
+                    : activeSession.verificationStatus === 'UNAPPROVED'
+                    ? '❌ Doctor Unapproved'
+                    : '⏳ Doctor Review Pending'}
+                </span>
+                <span className="text-xs font-semibold text-slate-600">
+                  Hospital: {activeSession.trustedHospitalName || 'Apex Multi-Specialty Hospital & Trauma Center'}
+                </span>
+              </div>
+              <h4 className="text-sm font-extrabold mt-1">
+                {activeSession.verificationStatus === 'APPROVED'
+                  ? `Report & Recommended Medicines Verified & Approved by ${activeSession.verifiedByDoctorName || 'Dr. Vikram Malhotra'}`
+                  : activeSession.verificationStatus === 'UNAPPROVED'
+                  ? `Clinical In-Person Consultation Required by ${activeSession.verifiedByDoctorName || 'Dr. Vikram Malhotra'}`
+                  : 'AI Intake Report & Recommended Medicines routed directly to hospital for doctor verification'}
+              </h4>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {activeSession.verificationStatus === 'APPROVED'
+                  ? 'Your prescription has been reviewed and validated. You can view complete details in the Clinical Report tab.'
+                  : activeSession.verificationStatus === 'UNAPPROVED'
+                  ? 'The physician requires a physical clinical checkup before self-administering any medications.'
+                  : 'Dr. Vikram Malhotra is reviewing your case. Once the doctor approves or unapproves, the status updates here live.'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('summary')}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 flex-shrink-0 cursor-pointer shadow-sm ${
+              activeSession.verificationStatus === 'APPROVED'
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                : activeSession.verificationStatus === 'UNAPPROVED'
+                ? 'bg-red-600 hover:bg-red-700 text-white'
+                : 'bg-amber-600 hover:bg-amber-700 text-white'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>Open Clinical Report</span>
+          </button>
+        </div>
+      )}
+
       {/* Primary Action Cards Responsive Grid (1-col on mobile, 2-3 on tablet, 6 on desktop) */}
       <div className="space-y-3">
         <h3 className="text-xs uppercase font-extrabold tracking-wider text-slate-500 px-1">
           Quick Actions for You
         </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           {quickActions.map(action => {
             const Icon = action.icon;
             const isSelected = activeTab === action.id;
@@ -551,10 +648,6 @@ export const PatientDashboard: React.FC<PatientDashboardProps> = ({ initialTab =
         {activeTab === 'trusted-hospitals' && <TrustedHospitalsManager />}
 
         {activeTab === 'consent' && <ConsentManager />}
-
-        {activeTab === 'qr-code' && (
-          <PatientQrCard patient={patientProfile} user={currentUser} />
-        )}
       </div>
     </div>
   );

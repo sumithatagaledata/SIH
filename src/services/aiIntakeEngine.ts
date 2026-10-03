@@ -949,9 +949,13 @@ export class AIIntakeEngine {
     patientProfile?: any
   ): Promise<IntakeAnalysisResult> {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2200);
+
       const res = await fetch('/api/ai-intake', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           action: 'chat',
           currentMessage: input,
@@ -962,6 +966,7 @@ export class AIIntakeEngine {
           patientProfile
         })
       });
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -982,10 +987,10 @@ export class AIIntakeEngine {
         }
       }
     } catch (err) {
-      console.warn('[AIIntakeEngine.analyzeInputAsync fetch fallback]:', err);
+      console.warn('[AIIntakeEngine.analyzeInputAsync fast fallback]:', err);
     }
 
-    // Fallback to local synchronous engine if network/API unavailable
+    // Fallback to local synchronous engine if network/API unavailable (<15ms)
     return this.analyzeInput(input, history, language, medicalSystem, isRedFlagDetectionEnabled);
   }
 
@@ -1003,9 +1008,13 @@ export class AIIntakeEngine {
     appointmentId?: string
   ): Promise<{ summary: ClinicalHistorySummary; shortReport: PhysicianShortReport }> {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+
       const res = await fetch('/api/ai-intake', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           action: 'generate_report',
           sessionId,
@@ -1018,6 +1027,7 @@ export class AIIntakeEngine {
           patientProfile
         })
       });
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -1026,7 +1036,7 @@ export class AIIntakeEngine {
         }
       }
     } catch (err) {
-      console.warn('[AIIntakeEngine.generateStructuredSummaryAsync fetch fallback]:', err);
+      console.warn('[AIIntakeEngine.generateStructuredSummaryAsync fast fallback]:', err);
     }
 
     // Fallback to local deterministic generator

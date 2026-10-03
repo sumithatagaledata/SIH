@@ -14,6 +14,7 @@ export interface User {
   avatarUrl?: string;
   isEmailVerified?: boolean;
   patientId?: string;
+  hospitalId?: string;
   createdAt: string;
 }
 
@@ -43,6 +44,8 @@ export interface PatientProfile {
   allergies?: string[];
   chronicConditions?: string[];
   currentMedications?: string[];
+  status?: string;
+  password?: string;
   isEmailVerified?: boolean;
   createdAt?: string;
 }
@@ -276,13 +279,29 @@ export interface ClinicalSession {
   patientPhone: string;
   startedAt: string;
   completedAt?: string;
-  status: 'IN_PROGRESS' | 'COMPLETED' | 'EMERGENCY_TRIGGERED' | 'VERIFIED';
+  status: 'IN_PROGRESS' | 'COMPLETED' | 'EMERGENCY_TRIGGERED' | 'VERIFIED' | 'APPROVED' | 'UNAPPROVED';
+  verificationStatus?: 'PENDING_PHYSICIAN_REVIEW' | 'APPROVED' | 'UNAPPROVED' | 'VERIFIED_BY_PHYSICIAN' | 'EDITED_AND_VERIFIED' | 'REJECTED';
   triagePriority: TriagePriority;
   triageRationale: string;
   chiefComplaint: string;
   selectedHospitalId?: string;
   selectedDepartmentId?: string;
   targetDoctorId?: string;
+  trustedHospitalId?: string;
+  trustedHospitalName?: string;
+  verifiedByDoctorId?: string;
+  verifiedByDoctorName?: string;
+  doctorVerificationNotes?: string;
+  verifiedAt?: string;
+  recommendedMedicines?: Array<{
+    name: string;
+    dosage?: string;
+    timing?: string;
+    duration?: string;
+    indication?: string;
+    warnings?: string;
+    status?: 'APPROVED' | 'UNAPPROVED' | 'PENDING';
+  }>;
   redFlagsDetected: string[];
   isRedFlagTriggered: boolean;
   emergencyAlertId?: string;
@@ -335,6 +354,15 @@ export interface PhysicianShortReport {
     source: ClinicalSourceTag;
   };
   relevantFindings: ClinicalSourceItem[];
+  recommendedMedicines?: Array<{
+    name: string;
+    dosage?: string;
+    timing?: string;
+    duration?: string;
+    indication?: string;
+    warnings?: string;
+    status?: 'APPROVED' | 'UNAPPROVED' | 'PENDING';
+  }>;
   redFlags?: {
     detected: boolean;
     flags: string[];
@@ -384,7 +412,18 @@ export interface ClinicalHistorySummary {
   dashavidhaPariksha?: DashavidhaPariksha;
   diagnosis?: string;
   treatmentRemarks?: string;
-  verificationStatus: 'PENDING_PHYSICIAN_REVIEW' | 'VERIFIED_BY_PHYSICIAN' | 'EDITED_AND_VERIFIED' | 'REJECTED';
+  verificationStatus: 'PENDING_PHYSICIAN_REVIEW' | 'APPROVED' | 'UNAPPROVED' | 'VERIFIED_BY_PHYSICIAN' | 'EDITED_AND_VERIFIED' | 'REJECTED';
+  trustedHospitalId?: string;
+  trustedHospitalName?: string;
+  recommendedMedicines?: Array<{
+    name: string;
+    dosage?: string;
+    timing?: string;
+    duration?: string;
+    indication?: string;
+    warnings?: string;
+    status?: 'APPROVED' | 'UNAPPROVED' | 'PENDING';
+  }>;
   verifiedByDoctorId?: string;
   verifiedByDoctorName?: string;
   doctorRegistrationNumber?: string;
@@ -395,6 +434,7 @@ export interface ClinicalHistorySummary {
 export interface EmergencyAlert {
   id: string;
   sessionId: string;
+  caseId?: string;
   patientId: string;
   patientName: string;
   patientAge: number;
@@ -403,8 +443,10 @@ export interface EmergencyAlert {
   hospitalId: string;
   hospitalName: string;
   priority: 'RED' | 'ORANGE';
+  severity?: 'CRITICAL' | 'HIGH' | 'MODERATE' | string;
   triggerReason: string;
   redFlags: string[];
+  redFlagDetails?: string;
   originalMessage?: string;
   detectedLanguage?: LanguageCode;
   translatedSummary?: string;
@@ -412,6 +454,12 @@ export interface EmergencyAlert {
   status: 'DISPATCHED' | 'ACKNOWLEDGED' | 'EN_ROUTE' | 'ARRIVED_AT_HOSPITAL' | 'HANDOVER_COMPLETED' | 'RESOLVED';
   timestamp: string;
   resolvedAt?: string;
+  liveLocation?: {
+    lat: number;
+    lng: number;
+    address?: string;
+    city?: string;
+  };
   ambulanceAssigned?: {
     vehicleNumber: string;
     driverName: string;
@@ -480,18 +528,24 @@ export interface AccessRequest {
 export interface HospitalAccount {
   id: string;
   userId: string; // linked User record (role: HOSPITAL_ADMIN)
+  hospitalId?: string;
   hospitalName: string;
   registrationId: string; // e.g. DH-MH-2024-00491
   address: string;
   city: string;
+  state?: string;
+  pincode?: string;
   location: string; // area/locality e.g. "Vashi, Navi Mumbai"
+  phone?: string;
   emergencyContact: string;
   email: string;
+  password?: string;
   ambulanceAvailable: boolean;
   departments: string[];
   licenseNumber?: string;
   linkedHospitalId?: string; // optional link to existing Hospital (capacity) record
   coordinates?: { lat: number; lng: number };
+  status?: string;
   createdAt: string;
 }
 
@@ -521,7 +575,7 @@ export interface AuditLog {
   actorId: string;
   actorName: string;
   actorRole: UserRole;
-  action: 'LOGIN' | 'INTAKE_STARTED' | 'INTAKE_COMPLETED' | 'DOCUMENT_UPLOADED' | 'OCR_EXTRACTED' | 'RED_FLAG_TRIGGERED' | 'EMERGENCY_DISPATCHED' | 'RECORD_VIEWED' | 'RECORD_VERIFIED' | 'CONSENT_GRANTED' | 'CONSENT_REVOKED' | 'FHIR_EXPORTED' | 'REQUEST_ACCESS' | 'APPROVE_ACCESS' | 'DENY_ACCESS' | 'REVOKE_ACCESS' | 'EMERGENCY_OVERRIDE' | 'QR_ACCESS';
+  action: 'LOGIN' | 'INTAKE_STARTED' | 'INTAKE_COMPLETED' | 'DOCUMENT_UPLOADED' | 'OCR_EXTRACTED' | 'RED_FLAG_TRIGGERED' | 'EMERGENCY_DISPATCHED' | 'RECORD_VIEWED' | 'RECORD_VERIFIED' | 'CONSENT_GRANTED' | 'CONSENT_REVOKED' | 'FHIR_EXPORTED' | 'REQUEST_ACCESS' | 'APPROVE_ACCESS' | 'DENY_ACCESS' | 'REVOKE_ACCESS' | 'EMERGENCY_OVERRIDE';
   targetEntity: string;
   targetId: string;
   ipAddress: string;
@@ -540,13 +594,286 @@ export interface AppNotification {
   actionUrl?: string;
 }
 
-export interface PatientQrRecord {
-  id: string;
-  patientUserId: string;
-  patientId: string;
-  secureToken: string;
+// =========================================================================
+// 16 PRIMARY RELATIONAL DATABASE TABLES / COLLECTIONS (ENTERPRISE SCHEMA)
+// =========================================================================
+
+/** 1. Users Collection */
+export interface UserRecord {
+  id: string; // Primary Key (e.g. usr-...)
+  email: string; // Unique
+  password?: string;
+  phone: string;
+  fullName: string;
+  role: UserRole;
+  avatarUrl?: string;
+  isEmailVerified: boolean;
+  patientId?: string; // Foreign Key to PatientRecord.patientId (optional)
+  hospitalId?: string; // Foreign Key to HospitalRecord.hospitalId (optional)
   createdAt: string;
   updatedAt: string;
-  status: 'ACTIVE' | 'REVOKED';
+}
+
+/** 2. Patients Collection */
+export interface PatientRecord {
+  id: string; // Primary Key (e.g. pat-...)
+  userId: string; // Foreign Key -> Users(id)
+  patientId: string; // Unique Identifier (e.g. MB-2026-XXXXXX)
+  abhaId?: string;
+  abhaAddress?: string;
+  dob: string;
+  age: number;
+  gender: 'MALE' | 'FEMALE' | 'OTHER';
+  bloodGroup: string;
+  heightCm?: number;
+  weightKg?: number;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  emergencyContactRelation: string;
+  address: string;
+  city: string;
+  state?: string;
+  pincode: string;
+  preferredLanguage?: LanguageCode;
+  status: 'ACTIVE' | 'INACTIVE' | 'ARCHIVED';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 3. Doctors Collection */
+export interface DoctorRecord {
+  id: string; // Primary Key (e.g. doc-...)
+  userId: string; // Foreign Key -> Users(id)
+  hospitalId: string; // Foreign Key -> Hospitals(hospitalId)
+  doctorName: string;
+  registrationNumber: string; // NMC / MCI Reg Number
+  qualification: string;
+  specialization: string;
+  medicalSystem?: MedicalSystem;
+  departmentId: string;
+  departmentName: string;
+  experienceYears: number;
+  isAvailable: boolean;
+  activePatientsCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 4. Hospitals Collection */
+export interface HospitalRecord {
+  id: string; // Primary Key (e.g. hosp-...)
+  userId: string; // Foreign Key -> Users(id)
+  hospitalId: string; // Unique Hospital ID (e.g. HOSP-2026-XXXXX)
+  hospitalName: string;
+  registrationId: string;
+  address: string;
+  city: string;
+  state?: string;
+  location: string;
+  pincode?: string;
+  emergencyContact: string;
+  phone?: string;
+  email: string;
+  ambulanceAvailable: boolean;
+  departments: string[];
+  status: 'VERIFIED' | 'PENDING' | 'SUSPENDED';
+  coordinates?: { lat: number; lng: number };
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 5. Cases Collection (Emergency & Clinical Intake) */
+export interface CaseRecord {
+  id: string; // Primary Key (e.g. MB-CASE-XXXXXX or case-...)
+  caseNumber?: string;
+  patientId: string; // Foreign Key -> Patients(patientId)
+  hospitalId: string; // Foreign Key -> Hospitals(hospitalId)
+  assignedDoctorId?: string; // Foreign Key -> Doctors(id) (optional)
+  status: 'TRIAGED' | 'ASSIGNED' | 'IN_REVIEW' | 'VERIFIED' | 'DISCHARGED' | 'COMPLETED';
+  triagePriority: TriagePriority;
+  triageRationale?: string;
+  chiefComplaint: string;
+  isRedFlagTriggered: boolean;
+  redFlags: string[];
+  workflowStatus?: string;
+  startedAt: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 6. Symptoms Collection */
+export interface SymptomRecord {
+  id: string; // Primary Key (e.g. sym-...)
+  caseId: string; // Foreign Key -> Cases(id)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  symptomName: string;
+  severity: 'MILD' | 'MODERATE' | 'SEVERE' | 'CRITICAL';
+  severityScore?: number; // 1 - 10
+  duration: string;
+  onset: 'SUDDEN' | 'GRADUAL';
+  bodySite?: string;
+  notes?: string;
+  source: 'PATIENT_REPORTED' | 'CLINICAL_OBSERVATION' | 'AI_EXTRACTED';
+  createdAt: string;
+}
+
+/** 7. MedicalHistory Collection */
+export interface MedicalHistoryRecord {
+  id: string; // Primary Key (e.g. medhist-...)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  conditionName: string;
+  diagnosisDate?: string;
+  status: 'ACTIVE' | 'RESOLVED' | 'CHRONIC' | 'CONTROLLED';
+  icdCode?: string;
+  notes?: string;
+  source: 'PATIENT_REPORTED' | 'EHR_SYNC' | 'DOCTOR_VERIFIED';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 8. Medications Collection */
+export interface MedicationRecord {
+  id: string; // Primary Key (e.g. med-...)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  caseId?: string; // Foreign Key -> Cases(id) (optional)
+  prescribedByDoctorId?: string; // Foreign Key -> Doctors(id) (optional)
+  medicationName: string;
+  dosage: string;
+  frequency: string;
+  route: string;
+  startDate?: string;
+  endDate?: string;
+  status: 'ACTIVE' | 'DISCONTINUED' | 'COMPLETED';
+  source?: 'PATIENT_REPORTED' | 'DOCTOR_PRESCRIBED' | 'DOCUMENT_OCR';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 9. Allergies Collection */
+export interface AllergyRecord {
+  id: string; // Primary Key (e.g. alg-...)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  allergen: string;
+  allergyType: 'DRUG' | 'FOOD' | 'ENVIRONMENTAL' | 'OTHER';
+  severity: 'MILD' | 'MODERATE' | 'SEVERE' | 'LIFE_THREATENING';
+  reaction: string;
+  identifiedDate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 10. Documents Collection */
+export interface MedicalDocumentRecord {
+  id: string; // Primary Key (e.g. doc-...)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  caseId?: string; // Foreign Key -> Cases(id) (optional)
+  userId?: string;
+  fileName: string;
+  fileType: 'PRESCRIPTION' | 'LAB_REPORT' | 'DISCHARGE_SUMMARY' | 'RADIOLOGY_REPORT' | 'OTHER' | string;
+  fileUrl: string;
+  downloadUrl?: string;
+  fileSize: string;
+  fileSizeBytes?: number;
+  mimeType?: string;
+  filePath?: string;
+  fileData?: string;
+  extractedData?: DocumentExtraction;
+  ocrText?: string;
+  status: 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  uploadDate: string;
+  createdAt: string;
+}
+
+/** 11. AIReports Collection */
+export interface AIReportRecord {
+  id: string; // Primary Key (e.g. air-... or sum-...)
+  caseId: string; // Foreign Key -> Cases(id)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  summaryText: string;
+  chiefComplaint: string;
+  triagePriority: TriagePriority;
+  redFlagsDetected: string[];
+  clinicalAnalysis?: string;
+  snomedCodes?: string[];
+  confidenceScore?: number;
+  missingOrUncertainInfo?: string[];
+  generatedAt: string;
+  createdAt: string;
+}
+
+/** 12. ClinicalNotes Collection */
+export interface ClinicalNoteRecord {
+  id: string; // Primary Key (e.g. note-...)
+  caseId: string; // Foreign Key -> Cases(id)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  doctorId: string; // Foreign Key -> Doctors(id)
+  hospitalId: string; // Foreign Key -> Hospitals(hospitalId)
+  noteType: 'ASSESSMENT' | 'SOAP' | 'RECOMMENDATION' | 'DISCHARGE';
+  content: string;
+  prescriptionOrders?: string[];
+  signedAt?: string;
+  isVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 13. Assignments Collection */
+export interface AssignmentRecord {
+  id: string; // Primary Key (e.g. asn-...)
+  caseId: string; // Foreign Key -> Cases(id)
+  patientId: string; // Foreign Key -> Patients(patientId)
+  hospitalId: string; // Foreign Key -> Hospitals(hospitalId)
+  doctorId: string; // Foreign Key -> Doctors(id)
+  assignedByUserId: string; // Foreign Key -> Users(id)
+  assignedAt: string;
+  status: 'ACTIVE' | 'REASSIGNED' | 'COMPLETED';
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 14. Messages Collection */
+export interface MessageRecord {
+  id: string; // Primary Key (e.g. msg-...)
+  caseId?: string; // Foreign Key -> Cases(id) (optional)
+  senderUserId: string; // Foreign Key -> Users(id)
+  receiverUserId: string; // Foreign Key -> Users(id)
+  senderRole: UserRole;
+  receiverRole: UserRole;
+  subject?: string;
+  messageText: string;
+  isRead: boolean;
+  sentAt: string;
+  createdAt: string;
+}
+
+/** 15. Notifications Collection */
+export interface NotificationRecord {
+  id: string; // Primary Key (e.g. notif-...)
+  userId: string; // Foreign Key -> Users(id)
+  patientId?: string; // Foreign Key -> Patients(patientId) (optional)
+  hospitalId?: string; // Foreign Key -> Hospitals(hospitalId) (optional)
+  type: 'CASE_ASSIGNED' | 'TRIAGE_ALERT' | 'ACCESS_REQUEST' | 'DOCTOR_RESPONSE' | 'EMERGENCY' | 'SYSTEM';
+  title: string;
+  message: string;
+  link?: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+/** 16. AuditLogs Collection */
+export interface AuditLogRecord {
+  id: string; // Primary Key (e.g. aud-... or UUID)
+  actorId: string; // Foreign Key -> Users(id)
+  actorName: string;
+  actorRole: UserRole;
+  action: string;
+  targetEntity: 'USERS' | 'PATIENTS' | 'DOCTORS' | 'HOSPITALS' | 'CASES' | 'SYMPTOMS' | 'MEDICAL_HISTORY' | 'MEDICATIONS' | 'ALLERGIES' | 'DOCUMENTS' | 'AI_REPORTS' | 'CLINICAL_NOTES' | 'ASSIGNMENTS' | 'MESSAGES' | 'NOTIFICATIONS' | 'AUDIT_LOGS' | 'ACCESS_REQUESTS';
+  targetId: string;
+  details: string;
+  ipAddress?: string;
+  timestamp: string;
+  createdAt: string;
 }
 

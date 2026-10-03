@@ -125,16 +125,17 @@ function setPersistedCache<T>(key: string, items: T[]): void {
   } catch {}
 }
 
-const FAKE_PATIENT_IDS = ['MB-2026-7F42K9', 'MB-2026-38491A', 'MB-2026-99210B', 'MB-2026-44109C'];
+const FAKE_PATIENT_IDS = ['MB-2026-7F42K9', 'MB-2026-38491A', 'MB-2026-99210B', 'MB-2026-44109C', 'MB-2026-RAJESH'];
 const FAKE_HOSPITAL_IDS = [
   'HOSP-2026-00101', 'HOSP-2026-00102', 'HOSP-2026-00103', 'HOSP-2026-00104',
   'HOSP-2026-00105', 'HOSP-2026-00106', 'HOSP-2026-00107', 'HOSP-2026-00108',
-  'hosp-001', 'hosp-002', 'hosp-003', 'hacct-001', 'hacct-002', 'hacct-003'
+  'hosp-001', 'hosp-002', 'hosp-003', 'hacct-001', 'hacct-002', 'hacct-003',
+  'hosp-lilavati', 'HOSP-MUM-001'
 ];
 const FAKE_HOSPITAL_KEYWORDS = [
   'apex super speciality', 'king edward memorial', 'mimer general',
   'ruby hall clinic', 'jehangir hospital', 'deenanath mangeshkar', 'sancheti institute',
-  'all india institute of medical sciences'
+  'all india institute of medical sciences', 'lilavati'
 ];
 
 class CloudDatabaseEngine {
@@ -153,7 +154,7 @@ class CloudDatabaseEngine {
 
   private constructor() {
     const rawPatients = getPersistedCache<CloudPatientRecord>(LOCAL_PERSIST_KEYS.PATIENTS);
-    this.patientsCache = rawPatients.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId));
+    this.patientsCache = rawPatients.filter(p => !FAKE_PATIENT_IDS.includes(p.patientId) && !(p.fullName || '').toLowerCase().includes('rajesh'));
     const rawHospitals = getPersistedCache<CloudHospitalRecord>(LOCAL_PERSIST_KEYS.HOSPITALS);
     this.hospitalsCache = rawHospitals.filter(h => {
       const id = (h.hospitalId || h.id || '').toUpperCase();
@@ -201,6 +202,11 @@ class CloudDatabaseEngine {
 
     if (eventData.type === 'CLEAR_ALL_REGISTRATIONS' || eventData.type === 'PURGE_ALL_DATA') {
       this.clearAllData();
+      return;
+    }
+
+    if (eventData.type === 'CLEAR_ALL_PATIENTS') {
+      this.clearAllPatients();
       return;
     }
 
@@ -493,6 +499,13 @@ class CloudDatabaseEngine {
     // Publish to central cloud database across all devices
     const success = await this.postCloudEvent('SAVE_PATIENT', newRecord);
     return success;
+  }
+
+  public deletePatient(patientId: string): void {
+    if (!patientId) return;
+    const cleanId = patientId.trim().toUpperCase();
+    this.patientsCache = this.patientsCache.filter(p => (p.patientId || '').toUpperCase() !== cleanId && (p.id || '').toUpperCase() !== cleanId);
+    setPersistedCache(LOCAL_PERSIST_KEYS.PATIENTS, this.patientsCache);
   }
 
   public async findPatientById(patientId: string): Promise<CloudPatientRecord | undefined> {
@@ -941,16 +954,28 @@ class CloudDatabaseEngine {
   // ==========================================
   // EMERGENCY ALERTS (Cross-Device ER Broadcast)
   // ==========================================
-  public async getEmergencyAlerts(patientId?: string): Promise<EmergencyAlert[]> {
+  public async getEmergencyAlerts(patientId?: string, hospitalId?: string): Promise<EmergencyAlert[]> {
     await this.syncAll();
-    if (!patientId) return this.emergenciesCache;
-    const clean = patientId.trim().toUpperCase();
-    const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
-    return this.emergenciesCache.filter(e => {
-      const ePId = (e.patientId || '').trim().toUpperCase();
-      const ePAlpha = ePId.replace(/[^A-Z0-9]/g, '');
-      return ePId === clean || ePAlpha === cleanAlpha;
-    });
+    let list = this.emergenciesCache;
+    if (patientId) {
+      const clean = patientId.trim().toUpperCase();
+      const cleanAlpha = clean.replace(/[^A-Z0-9]/g, '');
+      list = list.filter(e => {
+        const ePId = (e.patientId || '').trim().toUpperCase();
+        const ePAlpha = ePId.replace(/[^A-Z0-9]/g, '');
+        return ePId === clean || ePAlpha === cleanAlpha;
+      });
+    }
+    if (hospitalId) {
+      const cleanHosp = hospitalId.trim().toUpperCase();
+      const cleanHospAlpha = cleanHosp.replace(/[^A-Z0-9]/g, '');
+      list = list.filter(e => {
+        const eHosp = (e.hospitalId || '').trim().toUpperCase();
+        const eHospAlpha = eHosp.replace(/[^A-Z0-9]/g, '');
+        return eHosp === cleanHosp || eHospAlpha === cleanHospAlpha;
+      });
+    }
+    return list;
   }
 
   public async saveEmergencyAlert(alert: EmergencyAlert): Promise<boolean> {
@@ -1055,6 +1080,38 @@ class CloudDatabaseEngine {
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(new CustomEvent('medibridge_cloud_sync', { detail: { type: 'CLEAR_ALL_REGISTRATIONS' } }));
       window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'CLEAR_ALL_REGISTRATIONS' } }));
+    }
+  }
+
+  public clearAllPatients(): void {
+    this.patientsCache = [];
+    this.accessRequestsCache = [];
+    this.trustedHospitalsCache = [];
+    this.sessionsCache = [];
+    this.documentsCache = [];
+    this.emergenciesCache = [];
+    this.timelineCache = [];
+    this.appointmentsCache = [];
+
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.PATIENTS);
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.REQUESTS);
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.TRUSTED);
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.SESSIONS);
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.DOCUMENTS);
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.EMERGENCIES);
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.TIMELINE);
+        localStorage.removeItem(LOCAL_PERSIST_KEYS.APPOINTMENTS);
+        localStorage.removeItem('medibridge_sessions');
+        localStorage.removeItem('medibridge_documents');
+        localStorage.removeItem('medibridge_patients');
+      }
+    } catch {}
+
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('medibridge_cloud_sync', { detail: { type: 'CLEAR_ALL_PATIENTS' } }));
+      window.dispatchEvent(new CustomEvent('medibridge_db_update', { detail: { type: 'CLEAR_ALL_PATIENTS' } }));
     }
   }
 }

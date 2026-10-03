@@ -1,7 +1,7 @@
 // Vercel Serverless Function & Vite Middleware: /api/trusted-hospitals
 // Central Persistent Trusted Hospital Permissions
 
-import { getDatabase, saveDatabase } from './centralDb';
+import { getDatabase, saveDatabase } from './_lib/centralDb.js';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');

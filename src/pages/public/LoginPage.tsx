@@ -305,31 +305,36 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
   const handleHospitalRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
-    if (!hospName.trim() || !hospRegId.trim() || !hospEmail.trim() || !hospPassword.trim()) {
-      setErrorMessage('Please complete all required fields (Name, Registration ID, Email, Password).');
+    const cleanName = hospName.trim();
+    const cleanEmail = hospEmail.trim();
+    const cleanPass = hospPassword.trim();
+    const cleanReg = hospRegId.trim() || `REG-HOSP-${Date.now().toString().slice(-6)}`;
+
+    if (!cleanName || !cleanEmail || !cleanPass) {
+      setErrorMessage('Please complete Hospital Name, Email, and Password.');
       return;
     }
-    if (hospPassword.length < 4) {
+    if (cleanPass.length < 4) {
       setErrorMessage('Password must be at least 4 characters long.');
       return;
     }
-    if (hospPassword !== hospConfirmPassword) {
+    if (hospConfirmPassword.trim() && cleanPass !== hospConfirmPassword.trim()) {
       setErrorMessage('Passwords do not match.');
       return;
     }
     setIsLoading(true);
     try {
       const hospitalData: RegisterHospitalData = {
-        hospitalName: hospName.trim(),
-        registrationId: hospRegId.trim(),
+        hospitalName: cleanName,
+        registrationId: cleanReg,
         address: hospAddress.trim() || 'Hospital Facility Address',
-        city: hospCity.trim() || hospLocation.trim() || 'Central',
+        city: hospCity.trim() || hospLocation.trim() || 'Mumbai',
         location: hospLocation.trim() || hospCity.trim() || 'Clinical Medical Campus',
-        state: hospState.trim() || 'India',
+        state: hospState.trim() || 'Maharashtra',
         pincode: hospPincode.trim() || '400001',
-        emergencyContact: hospEmergencyContact.trim() || '+91 22 0000 0000',
-        email: hospEmail.trim(),
-        password: hospPassword,
+        emergencyContact: hospEmergencyContact.trim() || '+91 22 2000 0000',
+        email: cleanEmail,
+        password: cleanPass,
         ambulanceAvailable: hospAmbulance,
         coordinates: hospCoords || undefined,
         departments: ['Emergency & Trauma', 'General Medicine', 'Cardiology', 'ICU', 'Orthopedics']
@@ -338,7 +343,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
       if (res.success) {
         showToast(
           '🏥 Hospital Account Created!',
-          `${hospName} registered with Permanent ID: ${res.hospitalId}. Now discoverable by nearby patients!`,
+          `${cleanName} registered successfully! Now discoverable on MediBridge.`,
           'INFO'
         );
         if (onNavigate) onNavigate('/hospital/dashboard');
@@ -551,6 +556,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
           {/* Patient Login Form */}
           {authMode === 'LOGIN' && (
             <form onSubmit={handlePatientLoginSubmit} className="space-y-4">
+              {/* Quick Demo Helper */}
+              <div className="p-3 bg-teal-50/80 border border-teal-200 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5 font-bold text-teal-900">
+                    <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Verified Demo Patient: Aarav Sharma</span>
+                  </div>
+                  <div className="text-[11px] text-teal-700 font-mono">
+                    ID: <strong>MB-2026-ARV982</strong> • <span className="font-semibold">patient@medibridge.ai</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginEmail('patient@medibridge.ai');
+                    setLoginPassword('Patient@123');
+                    setErrorMessage('');
+                  }}
+                  className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-[11px] rounded-xl shadow-xs transition active:scale-95 shrink-0 cursor-pointer"
+                >
+                  ⚡ Auto-Fill
+                </button>
+              </div>
+
               <div className="space-y-1.5">
                 <label className={labelCls}><Mail className="w-3.5 h-3.5 text-teal-600" /><span>Email or Patient ID</span></label>
                 <input type="text" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
@@ -573,7 +602,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
                 className="w-full py-3 bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm rounded-xl shadow-md shadow-teal-600/20 transition flex items-center justify-center gap-2 mt-2 cursor-pointer">
                 {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <><span>Sign In as Patient</span><ArrowRight className="w-4 h-4" /></>}
               </button>
-              <p className="text-xs text-slate-500 text-center">New patient? <button type="button" onClick={() => setAuthMode('REGISTER')} className="text-teal-700 font-bold hover:underline cursor-pointer">Create account with Patient ID</button></p>
+              <p className="text-xs text-slate-500 text-center pt-2">New patient? <button type="button" onClick={() => setAuthMode('REGISTER')} className="text-teal-700 font-bold hover:underline cursor-pointer">Create account with Patient ID</button></p>
             </form>
           )}
 
@@ -714,21 +743,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
                 </div>
               </div>
 
-              {devHelperCode && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-600 flex-shrink-0" />
-                    <span>Dev/Local OTP: <code className="font-bold font-mono bg-amber-100 px-1.5 py-0.5 rounded">{devHelperCode}</code></span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setVerifyOtpCode(devHelperCode)}
-                    className="text-[11px] font-bold text-amber-800 underline hover:text-amber-950 cursor-pointer"
-                  >
-                    Auto-Fill
-                  </button>
-                </div>
-              )}
+
 
               <button
                 type="submit"
@@ -793,6 +808,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
           {/* Hospital Login Form */}
           {authMode === 'LOGIN' && (
             <form onSubmit={handleHospitalLoginSubmit} className="space-y-4">
+              {/* Quick Demo Helper */}
+              <div className="p-3 bg-blue-50/80 border border-blue-200 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-xs">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5 font-bold text-blue-900">
+                    <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Verified Hospital: Apex Multi-Specialty</span>
+                  </div>
+                  <div className="text-[11px] text-blue-700 font-mono">
+                    ID: <strong>HOSP-2026-PUNE01</strong> • <span className="font-semibold">hospital@medibridge.ai</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginEmail('hospital@medibridge.ai');
+                    setLoginPassword('Hospital@123');
+                    setErrorMessage('');
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[11px] rounded-xl shadow-xs transition active:scale-95 shrink-0 cursor-pointer"
+                >
+                  ⚡ Auto-Fill
+                </button>
+              </div>
+
               <div><label className={labelCls}><Mail className="w-3.5 h-3.5 text-blue-600" />Hospital Email</label>
                 <input type="email" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
                   placeholder="Enter hospital registered email" className={inputCls} /></div>
@@ -813,21 +852,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
                 className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-600/20 transition flex items-center justify-center gap-2 cursor-pointer">
                 {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <><span>Sign In — Hospital Portal</span><ArrowRight className="w-4 h-4" /></>}
               </button>
-              <p className="text-xs text-slate-500 text-center">New hospital? <button type="button" onClick={() => setAuthMode('REGISTER')} className="text-blue-700 font-bold hover:underline cursor-pointer">Register your hospital</button></p>
+              <p className="text-xs text-slate-500 text-center pt-2">New hospital? <button type="button" onClick={() => setAuthMode('REGISTER')} className="text-blue-700 font-bold hover:underline cursor-pointer">Register your hospital</button></p>
             </form>
           )}
 
           {/* Hospital Register Form */}
           {authMode === 'REGISTER' && (
             <form onSubmit={handleHospitalRegisterSubmit} className="space-y-4">
+
               {/* Hospital Info */}
               <div className="pb-1">
                 <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-3">Hospital Information</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="sm:col-span-2"><label className={labelCls}><Building2 className="w-3.5 h-3.5 text-blue-600" />Hospital Name *</label>
                     <input type="text" required value={hospName} onChange={e => setHospName(e.target.value)} placeholder="e.g. City General Hospital & Trauma Centre" className={inputCls} /></div>
-                  <div><label className={labelCls}><FileText className="w-3.5 h-3.5 text-blue-600" />Registration / License ID *</label>
-                    <input type="text" required value={hospRegId} onChange={e => setHospRegId(e.target.value)} placeholder="e.g. DH-MH-2024-00491" className={inputCls} /></div>
+                  <div><label className={labelCls}><FileText className="w-3.5 h-3.5 text-blue-600" />Registration / License ID</label>
+                    <input type="text" value={hospRegId} onChange={e => setHospRegId(e.target.value)} placeholder="Auto-generated if left blank" className={inputCls} /></div>
                   <div><label className={labelCls}><Phone className="w-3.5 h-3.5 text-blue-600" />Emergency Contact</label>
                     <input type="tel" value={hospEmergencyContact} onChange={e => setHospEmergencyContact(e.target.value)} placeholder="+91 22 2789 9900" className={inputCls} /></div>
                 </div>
@@ -864,10 +904,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="sm:col-span-2"><label className={labelCls}><MapPin className="w-3.5 h-3.5 text-blue-600" />Hospital Address</label>
                     <input type="text" value={hospAddress} onChange={e => setHospAddress(e.target.value)} placeholder="e.g. Station Road, Talegaon Dabhade" className={inputCls} /></div>
-                  <div><label className={labelCls}>Locality / Area *</label>
-                    <input type="text" required value={hospLocation} onChange={e => setHospLocation(e.target.value)} placeholder="e.g. Talegaon Dabhade" className={inputCls} /></div>
-                  <div><label className={labelCls}>City *</label>
-                    <input type="text" required value={hospCity} onChange={e => setHospCity(e.target.value)} placeholder="e.g. Pune / Mumbai" className={inputCls} /></div>
+                  <div><label className={labelCls}>Locality / Area</label>
+                    <input type="text" value={hospLocation} onChange={e => setHospLocation(e.target.value)} placeholder="e.g. Talegaon Dabhade" className={inputCls} /></div>
+                  <div><label className={labelCls}>City</label>
+                    <input type="text" value={hospCity} onChange={e => setHospCity(e.target.value)} placeholder="e.g. Pune / Mumbai" className={inputCls} /></div>
                   <div><label className={labelCls}>State</label>
                     <input type="text" value={hospState} onChange={e => setHospState(e.target.value)} placeholder="e.g. Maharashtra" className={inputCls} /></div>
                   <div><label className={labelCls}>PIN Code</label>
@@ -917,6 +957,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate, initialPortal 
                 className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl shadow-md shadow-blue-600/20 transition flex items-center justify-center gap-2 cursor-pointer">
                 {isLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <><span>Register Hospital on MediBridge</span><ArrowRight className="w-4 h-4" /></>}
               </button>
+
+              <p className="text-xs text-slate-500 text-center">Already registered? <button type="button" onClick={() => setAuthMode('LOGIN')} className="text-blue-700 font-bold hover:underline cursor-pointer">Sign in to Hospital Portal</button></p>
             </form>
           )}
 

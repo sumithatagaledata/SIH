@@ -34,3 +34,4 @@ lerna-debug.log*
 scratch/
 data/
 
+.vercel

@@ -389,10 +389,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true };
   };
 
-  // Register New Hospital (Portal Account & Shared Hospital Registry)
   const registerHospital = async (data: RegisterHospitalData): Promise<{ success: boolean; hospitalId?: string; message?: string }> => {
     const res = await centralAuthService.registerHospital(data);
-    if (!res.success || !res.user || !res.hospitalAccount) {
+    const resolvedHospital = res.hospitalAccount || (res as any).hospital;
+    if (!res.success || !res.user || !resolvedHospital) {
       return {
         success: false,
         message: res.message || 'Failed to create hospital account in central database.'
@@ -400,7 +400,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const newUser = res.user;
-    const newHospitalAccount = res.hospitalAccount;
+    const newHospitalAccount = resolvedHospital;
 
     setCurrentUser(newUser);
     setHospitalAccount(newHospitalAccount);

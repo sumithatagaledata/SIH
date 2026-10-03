@@ -10,7 +10,6 @@ import authHandler from './api/auth';
 import aiIntakeHandler from './api/ai-intake';
 import appointmentsHandler from './api/appointments';
 import emergenciesHandler from './api/emergencies';
-import qrHandler from './api/qr';
 import documentsHandler from './api/documents';
 
 const devApiPlugin = (): Plugin => {
@@ -24,7 +23,6 @@ const devApiPlugin = (): Plugin => {
     '/api/trusted-hospitals': trustedHospitalsHandler,
     '/api/appointments': appointmentsHandler,
     '/api/emergencies': emergenciesHandler,
-    '/api/qr': qrHandler,
     '/api/documents': documentsHandler,
   };
 

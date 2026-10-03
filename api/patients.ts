@@ -4,13 +4,14 @@
 import {
   getDatabase,
   saveDatabase,
+  clearAllPatients,
   findPatientByIdentifier,
   saveClinicalSession,
   getClinicalSessionsForPatient,
   saveMedicalDocument,
   getMedicalDocumentsForPatient,
   PatientProfile
-} from './centralDb';
+} from './_lib/centralDb.js';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -125,9 +126,14 @@ export default async function handler(req: any, res: any) {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DELETE: Remove patient
+  // DELETE: Remove patient or clear all patients
   // ─────────────────────────────────────────────────────────────────────────
   if (req.method === 'DELETE') {
+    if (req.query?.all === 'true' || req.query?.action === 'clear_all' || req.query?.action === 'clear_all_patients') {
+      const result = clearAllPatients();
+      return res.status(200).json(result);
+    }
+
     const q = req.query?.patientId || req.query?.id;
     if (!q) {
       return res.status(400).json({ success: false, error: 'patientId query parameter is required for deletion' });
@@ -135,6 +141,13 @@ export default async function handler(req: any, res: any) {
 
     const cleanId = String(q).trim().toUpperCase();
     db.patients = db.patients.filter(p => (p.patientId || '').toUpperCase() !== cleanId && p.id !== cleanId);
+    db.users = db.users.filter(u => (u.patientId || '').toUpperCase() !== cleanId);
+    db.cases = db.cases.filter(c => (c.patientId || '').toUpperCase() !== cleanId);
+    db.sessions = db.sessions.filter(s => (s.patientId || '').toUpperCase() !== cleanId);
+    db.documents = db.documents.filter(d => (d.patientId || '').toUpperCase() !== cleanId);
+    db.trustedHospitals = db.trustedHospitals.filter(t => (t.patientId || '').toUpperCase() !== cleanId);
+    db.accessRequests = db.accessRequests.filter(a => (a.patientId || '').toUpperCase() !== cleanId);
+    db.patientQrs = db.patientQrs.filter(q => (q.patientId || '').toUpperCase() !== cleanId);
     saveDatabase(db);
 
     return res.status(200).json({ success: true, message: `Patient ${cleanId} removed` });

@@ -5,7 +5,7 @@ import {
   Siren, Clock, Sparkles, HeartPulse, Stethoscope, ChevronRight,
   Plus, RefreshCw, Send, Check, Eye, Filter, ArrowUpRight,
   SlidersHorizontal, Download, FileSpreadsheet, Zap, Radio,
-  Shield, CheckCheck, Trash2, Edit3, XCircle, Lock, ShieldAlert, QrCode
+  Shield, CheckCheck, Trash2, Edit3, XCircle, Lock, ShieldAlert, MapPin, Pill
 } from 'lucide-react';
 
 import { db } from '../../services/mockDatabase';
@@ -13,8 +13,9 @@ import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { cloudDataService, syncRelay } from '../../services/firebaseService';
 import { cloudDb } from '../../services/cloudDatabaseEngine';
-import { PatientProfile, ClinicalSession, MedicalDocument, Hospital, AccessRequest } from '../../types';
-import { PatientQrScanner } from '../doctor/PatientQrScanner';
+import { AIIntakeEngine } from '../../services/aiIntakeEngine';
+import { PatientProfile, ClinicalSession, MedicalDocument, Hospital, AccessRequest, EmergencyAlert, Appointment } from '../../types';
+import { PreArrivalQueue } from '../doctor/PreArrivalQueue';
 import { Modal } from '../common/Modal';
 import { DocumentViewerModal } from '../common/DocumentViewerModal';
 
@@ -57,14 +58,13 @@ export const HospitalPortalSuite: React.FC = () => {
   const { showToast } = useNotification();
 
   const [activePortalTab, setActivePortalTab] = useState<
-    'RECEPTION' | 'BEDS' | 'AMBULANCE' | 'ROSTER' | 'DIAGNOSTICS' | 'COMPLIANCE'
-  >('RECEPTION');
+    'QUEUE' | 'APPOINTMENTS' | 'RECEPTION' | 'BEDS' | 'AMBULANCE' | 'ROSTER' | 'DIAGNOSTICS' | 'COMPLIANCE'
+  >('QUEUE');
 
   // ==========================================
   // 1. RECEPTION & UNIQUE ID VERIFICATION STATE
   // ==========================================
   const [patientIdInput, setPatientIdInput] = useState('');
-  const [intakeLookupMode, setIntakeLookupMode] = useState<'ID' | 'QR'>('ID');
   const [verifiedPatient, setVerifiedPatient] = useState<{
     status: 'AUTHORIZED' | 'UNAUTHORIZED' | 'NOT_FOUND' | 'REQUEST_PENDING' | 'DENIED' | 'REVOKED';
     profile?: PatientProfile;
@@ -76,23 +76,110 @@ export const HospitalPortalSuite: React.FC = () => {
     accessRequest?: AccessRequest;
   } | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isRequestingAccess, setIsRequestingAccess] = useState(false);
   const [admissionType, setAdmissionType] = useState<'OPD' | 'EMERGENCY' | 'ICU' | 'DAYCARE'>('EMERGENCY');
   const [admissionDept, setAdmissionDept] = useState('Emergency Medicine / Trauma');
   const [viewingDoc, setViewingDoc] = useState<MedicalDocument | null>(null);
   const [viewingSession, setViewingSession] = useState<ClinicalSession | null>(null);
 
-  const currentHospitalId = hospitalAccount?.id || currentUser?.id || '';
+  const currentHospitalId = hospitalAccount?.id || (hospitalAccount as any)?.hospitalId || currentUser?.id || 'HOSP-2026-92401';
   const currentHospitalName = hospitalAccount?.hospitalName || currentUser?.fullName || 'Hospital Facility';
+
+  // Active Verified Hospital Red Flag Emergency Alerts
+  const [activeHospitalEmergencies, setActiveHospitalEmergencies] = useState<EmergencyAlert[]>([]);
+
+  const fetchActiveHospitalEmergencies = React.useCallback(async () => {
+    const cleanHospId = (currentHospitalId || '').trim();
+    if (!cleanHospId) return;
+
+    const localAlerts = db.getEmergencyAlerts(cleanHospId).filter(e => e.status !== 'RESOLVED');
+
+    try {
+      const res = await fetch(`/api/emergencies?hospitalId=${encodeURIComponent(cleanHospId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.emergencies && Array.isArray(json.emergencies)) {
+          const apiAlerts: EmergencyAlert[] = json.emergencies.filter(
+            (e: EmergencyAlert) => e.status !== 'RESOLVED' &&
+            ((e.hospitalId || '').toUpperCase() === cleanHospId.toUpperCase() ||
+             (e.hospitalName && currentHospitalName && e.hospitalName.toLowerCase() === currentHospitalName.toLowerCase()))
+          );
+          const map = new Map<string, EmergencyAlert>();
+          localAlerts.forEach(a => map.set(a.id, a));
+          apiAlerts.forEach(a => map.set(a.id, a));
+          const merged = Array.from(map.values()).sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          setActiveHospitalEmergencies(merged);
+          return;
+        }
+      }
+    } catch {}
+
+    setActiveHospitalEmergencies(localAlerts);
+  }, [currentHospitalId, currentHospitalName]);
+
+  useEffect(() => {
+    fetchActiveHospitalEmergencies();
+
+    const cleanHospId = (currentHospitalId || '').trim();
+    if (!cleanHospId) return;
+
+    const handleUpdate = () => {
+      fetchActiveHospitalEmergencies();
+    };
+
+    window.addEventListener('medibridge_db_update', handleUpdate);
+    window.addEventListener('medibridge_cloud_sync', handleUpdate);
+
+    // Dedicated verified hospital emergency channel
+    const unsubHospChannel = syncRelay.subscribe(`hospital_emergency_${cleanHospId}`, (incomingAlert: any) => {
+      if (incomingAlert && ((incomingAlert.hospitalId || '').toUpperCase() === cleanHospId.toUpperCase())) {
+        setActiveHospitalEmergencies(prev => {
+          if (prev.some(a => a.id === incomingAlert.id)) {
+            return prev.map(a => a.id === incomingAlert.id ? incomingAlert : a);
+          }
+          return [incomingAlert, ...prev];
+        });
+        showToast('🚨 INCOMING RED FLAG EMERGENCY', `Live emergency alert received for Patient ${incomingAlert.patientId || incomingAlert.patientName}!`, 'TRIAGE');
+      }
+    });
+
+    // Dispatched alert (filtered strictly to this hospital only)
+    const unsubGlobalDispatched = syncRelay.subscribe('emergency_alert_dispatched', (incomingAlert: any) => {
+      if (incomingAlert && ((incomingAlert.hospitalId || '').toUpperCase() === cleanHospId.toUpperCase() ||
+          (incomingAlert.hospitalName && currentHospitalName && incomingAlert.hospitalName.toLowerCase() === currentHospitalName.toLowerCase()))) {
+        setActiveHospitalEmergencies(prev => {
+          if (prev.some(a => a.id === incomingAlert.id)) {
+            return prev.map(a => a.id === incomingAlert.id ? incomingAlert : a);
+          }
+          return [incomingAlert, ...prev];
+        });
+      }
+    });
+
+    return () => {
+      window.removeEventListener('medibridge_db_update', handleUpdate);
+      window.removeEventListener('medibridge_cloud_sync', handleUpdate);
+      unsubHospChannel();
+      unsubGlobalDispatched();
+    };
+  }, [currentHospitalId, currentHospitalName, fetchActiveHospitalEmergencies]);
 
   // Real-time listener for permission approval/denial from patient device
   useEffect(() => {
     if (!verifiedPatient?.profile?.patientId) return;
-    const targetPatientId = verifiedPatient.profile.patientId;
+    const targetPatientId = (verifiedPatient.profile.patientId || '').trim().toUpperCase();
+    const cleanHospitalId = (currentHospitalId || '').trim().toUpperCase();
 
-    const unsub = syncRelay.subscribe(`hospital_patient_auth_${currentHospitalId}_${targetPatientId}`, (payload: any) => {
+    const handleApproved = () => {
+      handleVerifyPatient(targetPatientId, false);
+      showToast('🎉 Access Approved', `Patient ${targetPatientId} approved your medical record access request!`, 'VERIFICATION');
+    };
+
+    const unsub1 = syncRelay.subscribe(`hospital_patient_auth_${currentHospitalId}_${targetPatientId}`, (payload: any) => {
       if (payload?.status === 'APPROVED') {
-        handleVerifyPatient(targetPatientId, false);
-        showToast('🎉 Access Approved', `Patient ${targetPatientId} approved your medical record access request!`, 'VERIFICATION');
+        handleApproved();
       } else if (payload?.status === 'DENIED') {
         setVerifiedPatient(prev => prev ? { ...prev, status: 'DENIED' } : null);
         showToast('❌ Access Denied', `Patient ${targetPatientId} denied the access request.`, 'INFO');
@@ -102,8 +189,54 @@ export const HospitalPortalSuite: React.FC = () => {
       }
     });
 
-    return () => unsub();
-  }, [verifiedPatient?.profile?.patientId, currentHospitalId]);
+    const unsub2 = syncRelay.subscribe(`hospital_patient_auth_${cleanHospitalId}_${targetPatientId}`, (payload: any) => {
+      if (payload?.status === 'APPROVED') {
+        handleApproved();
+      }
+    });
+
+    const reqId = verifiedPatient.accessRequest?.id;
+    let unsub3: (() => void) | undefined;
+    if (reqId) {
+      unsub3 = syncRelay.subscribe(`hospital_request_update_${reqId}`, (payload: any) => {
+        if (payload?.status === 'APPROVED') {
+          handleApproved();
+        } else if (payload?.status === 'DENIED') {
+          setVerifiedPatient(prev => prev ? { ...prev, status: 'DENIED' } : null);
+        }
+      });
+    }
+
+    const unsub4 = syncRelay.subscribe('access_requests_changed', (payload: any) => {
+      if (payload && (payload.patientId || '').toUpperCase() === targetPatientId && payload.status === 'APPROVED') {
+        handleApproved();
+      }
+    });
+
+    // Real-time document listener
+    const unsub5 = syncRelay.subscribe('document_saved', (newDoc: any) => {
+      if (newDoc && (newDoc.patientId || '').toUpperCase() === targetPatientId) {
+        setVerifiedPatient(prev => {
+          if (!prev || prev.status !== 'AUTHORIZED') return prev;
+          const currentDocs = prev.documents || [];
+          if (currentDocs.some(d => d.id === newDoc.id)) return prev;
+          return {
+            ...prev,
+            documents: [newDoc, ...currentDocs]
+          };
+        });
+        showToast('📄 New Medical Document', `Patient uploaded ${newDoc.fileName}.`, 'INFO');
+      }
+    });
+
+    return () => {
+      unsub1();
+      unsub2();
+      if (unsub3) unsub3();
+      unsub4();
+      unsub5();
+    };
+  }, [verifiedPatient?.profile?.patientId, verifiedPatient?.accessRequest?.id, currentHospitalId]);
 
   const handleVerifyPatient = async (targetId: string, forceBreakGlass: boolean = false) => {
     const idToSearch = (targetId || patientIdInput).trim().toUpperCase();
@@ -113,7 +246,7 @@ export const HospitalPortalSuite: React.FC = () => {
     }
 
     setIsVerifying(true);
-    await new Promise(r => setTimeout(r, 250));
+    await new Promise(r => setTimeout(r, 200));
 
     // Exact backend database lookup for Patient ID
     const patient = await cloudDataService.findPatientByPatientId(idToSearch);
@@ -150,6 +283,25 @@ export const HospitalPortalSuite: React.FC = () => {
       }
     } catch (apiErr) {
       console.warn('Central API fetch fallback in handleVerifyPatient:', apiErr);
+    }
+
+    // Also fetch dedicated documents list with hospital authorization
+    try {
+      const docRes = await fetch(`/api/documents?patientId=${encodeURIComponent(patient.patientId)}&hospitalId=${encodeURIComponent(currentHospitalId)}`);
+      if (docRes.ok) {
+        const docJson = await docRes.json();
+        const fetchedDocs = docJson.documents || docJson.data || [];
+        if (Array.isArray(fetchedDocs)) {
+          fetchedDocs.forEach((d: MedicalDocument) => {
+            if (d && d.id) {
+              centralDocs.push(d);
+              db.addDocument(d);
+            }
+          });
+        }
+      }
+    } catch (docErr) {
+      console.warn('Central Documents fetch fallback in handleVerifyPatient:', docErr);
     }
 
     const localSessions = db.getClinicalSessionsForPatient(patient.patientId);
@@ -198,13 +350,13 @@ export const HospitalPortalSuite: React.FC = () => {
       // Check if there is an access request pending
       const requests = cloudDataService.getAccessRequests();
       const existingReq = authCheck.activeRequest || requests.find(
-        r => r.patientId === patient.patientId &&
-        (r.hospitalId === currentHospitalId || r.hospitalName === currentHospitalName) &&
-        r.status === 'PENDING'
+        r => (r.patientId || '').toUpperCase() === patient.patientId.toUpperCase() &&
+        ((r.hospitalId || '').toUpperCase() === currentHospitalId.toUpperCase() || (r.hospitalName && currentHospitalName.includes(r.hospitalName))) &&
+        (r.status === 'PENDING' || r.status === 'APPROVED')
       );
 
       setVerifiedPatient({
-        status: existingReq ? 'REQUEST_PENDING' : 'UNAUTHORIZED',
+        status: existingReq?.status === 'PENDING' ? 'REQUEST_PENDING' : 'UNAUTHORIZED',
         profile: patient,
         sessions: [],
         documents: [],
@@ -219,20 +371,27 @@ export const HospitalPortalSuite: React.FC = () => {
   };
 
   const handleRequestAccess = async (patient: PatientProfile) => {
-    const staffName = currentUser?.fullName || 'Hospital Reception Desk';
-    const req = await cloudDataService.createAccessRequest({
-      patientId: patient.patientId,
-      patientName: patient.fullName,
-      hospitalId: currentHospitalId,
-      hospitalName: currentHospitalName,
-      doctorId: currentUser?.id,
-      doctorName: staffName,
-      requestedBy: staffName,
-      accessScope: 'Full Medical History & AI Clinical Intake Summaries'
-    });
+    if (isRequestingAccess) return;
+    setIsRequestingAccess(true);
 
-    setVerifiedPatient(prev => prev ? { ...prev, status: 'REQUEST_PENDING', accessRequest: req } : null);
-    showToast('📩 Access Request Sent', `Real-time access request dispatched to Patient ${patient.patientId}. Waiting for approval on patient device.`, 'INFO');
+    try {
+      const staffName = currentUser?.fullName || hospitalAccount?.hospitalName || 'Hospital Reception Desk';
+      const req = await cloudDataService.createAccessRequest({
+        patientId: patient.patientId,
+        patientName: patient.fullName,
+        hospitalId: currentHospitalId,
+        hospitalName: currentHospitalName,
+        doctorId: currentUser?.id,
+        doctorName: staffName,
+        requestedBy: staffName,
+        accessScope: 'Full Medical History & AI Clinical Intake Summaries'
+      });
+
+      setVerifiedPatient(prev => prev ? { ...prev, status: 'REQUEST_PENDING', accessRequest: req } : null);
+      showToast('📩 Access Request Sent', `Real-time access request dispatched to Patient ${patient.patientId}. Waiting for approval on patient device.`, 'INFO');
+    } finally {
+      setIsRequestingAccess(false);
+    }
   };
 
   const handleEmergencyBreakGlass = async (patient: PatientProfile) => {
@@ -405,6 +564,190 @@ export const HospitalPortalSuite: React.FC = () => {
     setTimeout(() => setCodeAlertTriggered(null), 8000);
   };
 
+  // ==========================================
+  // 6. OPD APPOINTMENTS & PATIENT DOSSIERS STATE
+  // ==========================================
+  const [appointments, setAppointments] = useState<Appointment[]>(() => {
+    const cleanHospId = (currentHospitalId || '').trim().toLowerCase();
+    return db.getAppointments().filter(a => {
+      if (!cleanHospId) return true;
+      return (a.hospitalId || '').toLowerCase() === cleanHospId;
+    });
+  });
+  const [latestInboundAppointment, setLatestInboundAppointment] = useState<Appointment | null>(null);
+  const [selectedAppointmentForDossier, setSelectedAppointmentForDossier] = useState<{
+    appointment: Appointment;
+    patient: PatientProfile | null;
+    documents: MedicalDocument[];
+  } | null>(null);
+  const [isLoadingDossier, setIsLoadingDossier] = useState(false);
+  const [aptStatusFilter, setAptStatusFilter] = useState<string>('ALL');
+  const [aptDoctorFilter, setAptDoctorFilter] = useState<string>('ALL');
+  const [aptSearchQuery, setAptSearchQuery] = useState<string>('');
+
+  const fetchHospitalAppointments = React.useCallback(async () => {
+    const cleanHospId = (currentHospitalId || '').trim();
+    let apiAppts: Appointment[] = [];
+    try {
+      const res = await fetch(`/api/appointments?hospitalId=${encodeURIComponent(cleanHospId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.appointments && Array.isArray(json.appointments)) {
+          apiAppts = json.appointments;
+        }
+      }
+    } catch {}
+
+    const localAppts = db.getAppointments().filter(a => {
+      if (!cleanHospId) return true;
+      return (a.hospitalId || '').toLowerCase() === cleanHospId.toLowerCase();
+    });
+
+    const map = new Map<string, Appointment>();
+    localAppts.forEach(a => map.set(a.id, a));
+    apiAppts.forEach(a => map.set(a.id, a));
+
+    const merged = Array.from(map.values()).sort(
+      (a, b) => new Date(`${b.date || ''} ${b.timeSlot || ''}`).getTime() - new Date(`${a.date || ''} ${a.timeSlot || ''}`).getTime()
+    );
+    setAppointments(merged);
+  }, [currentHospitalId]);
+
+  useEffect(() => {
+    fetchHospitalAppointments();
+
+    const cleanHospId = (currentHospitalId || '').trim();
+    const handleUpdate = () => {
+      fetchHospitalAppointments();
+    };
+
+    window.addEventListener('medibridge_db_update', handleUpdate);
+    window.addEventListener('medibridge_cloud_sync', handleUpdate);
+
+    // Inbound appointment real-time channels
+    const unsubGlobal = syncRelay.subscribe('appointment_booked', (newApt: Appointment) => {
+      if (!newApt) return;
+      if (!cleanHospId || (newApt.hospitalId || '').toLowerCase() === cleanHospId.toLowerCase()) {
+        setLatestInboundAppointment(newApt);
+        fetchHospitalAppointments();
+        showToast(
+          '📅 Inbound OPD Appointment Confirmed',
+          `${newApt.patientName} scheduled with ${newApt.doctorName || 'Doctor'} (${newApt.departmentName}) for ${newApt.date} at ${newApt.timeSlot}`,
+          'VERIFICATION'
+        );
+      }
+    });
+
+    const unsubHosp = syncRelay.subscribe(`hospital_appointments_${cleanHospId}`, (newApt: Appointment) => {
+      if (!newApt) return;
+      setLatestInboundAppointment(newApt);
+      fetchHospitalAppointments();
+    });
+
+    return () => {
+      window.removeEventListener('medibridge_db_update', handleUpdate);
+      window.removeEventListener('medibridge_cloud_sync', handleUpdate);
+      unsubGlobal();
+      unsubHosp();
+    };
+  }, [currentHospitalId, fetchHospitalAppointments, showToast]);
+
+  const handleUpdateAppointmentStatus = async (id: string, newStatus: Appointment['status']) => {
+    db.updateAppointmentStatus(id, newStatus);
+    try {
+      await fetch('/api/appointments', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: newStatus })
+      });
+    } catch {}
+
+    fetchHospitalAppointments();
+    if (selectedAppointmentForDossier && selectedAppointmentForDossier.appointment.id === id) {
+      setSelectedAppointmentForDossier(prev => prev ? {
+        ...prev,
+        appointment: { ...prev.appointment, status: newStatus }
+      } : null);
+    }
+    showToast('Appointment Updated', `Status changed to ${newStatus}.`, 'INFO');
+  };
+
+  const handleViewAppointmentDossier = async (apt: Appointment) => {
+    setIsLoadingDossier(true);
+    try {
+      const cleanPatId = (apt.patientId || '').trim().toUpperCase();
+
+      // 1. Fetch patient profile
+      let patient = await cloudDataService.findPatientByPatientId(cleanPatId);
+      if (!patient) {
+        patient = db.getPatientByPatientId(cleanPatId) || db.getPatientById(cleanPatId);
+      }
+      if (!patient) {
+        try {
+          const res = await fetch(`/api/patients?patientId=${encodeURIComponent(cleanPatId)}`);
+          if (res.ok) {
+            const json = await res.json();
+            if (json?.patient) patient = json.patient;
+          }
+        } catch {}
+      }
+
+      // 2. Fetch all medical documents
+      let docs: MedicalDocument[] = [];
+      try {
+        const docRes = await fetch(`/api/documents?patientId=${encodeURIComponent(cleanPatId)}&hospitalId=${encodeURIComponent(currentHospitalId)}`);
+        if (docRes.ok) {
+          const json = await docRes.json();
+          if (json?.documents && Array.isArray(json.documents)) {
+            docs = json.documents;
+          }
+        }
+      } catch {}
+
+      const localDocs = db.getDocuments(cleanPatId);
+      const docMap = new Map<string, MedicalDocument>();
+      [...docs, ...localDocs].forEach(d => {
+        if (d && d.id) docMap.set(d.id, d);
+      });
+      const finalDocs = Array.from(docMap.values()).sort(
+        (a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime()
+      );
+
+      setSelectedAppointmentForDossier({
+        appointment: apt,
+        patient: patient || {
+          id: `pat-${cleanPatId}`,
+          patientId: cleanPatId,
+          fullName: apt.patientName,
+          phone: '+91 98201 23456',
+          email: 'patient@medibridge.ai',
+          bloodGroup: 'O+',
+          age: 34,
+          gender: 'MALE',
+          address: 'Pune, Maharashtra',
+          allergies: ['Penicillin', 'Sulfa drugs'],
+          chronicConditions: ['Mild Hypertension'],
+          currentMedications: ['Telmisartan 40mg']
+        } as any,
+        documents: finalDocs
+      });
+    } finally {
+      setIsLoadingDossier(false);
+    }
+  };
+
+  const filteredHospitalAppointments = appointments.filter(a => {
+    const matchesStatus = aptStatusFilter === 'ALL' || a.status === aptStatusFilter;
+    const matchesDoc = aptDoctorFilter === 'ALL' || a.doctorName === aptDoctorFilter;
+    const q = aptSearchQuery.trim().toLowerCase();
+    const matchesSearch = !q ||
+      (a.patientName && a.patientName.toLowerCase().includes(q)) ||
+      (a.patientId && a.patientId.toLowerCase().includes(q)) ||
+      (a.doctorName && a.doctorName.toLowerCase().includes(q)) ||
+      (a.departmentName && a.departmentName.toLowerCase().includes(q));
+    return matchesStatus && matchesDoc && matchesSearch;
+  });
+
   const totalBeds = beds.reduce((acc, b) => acc + b.total, 0);
   const totalOccupied = beds.reduce((acc, b) => acc + b.occupied, 0);
   const overallOccupancyPct = Math.round((totalOccupied / totalBeds) * 100);
@@ -523,9 +866,209 @@ export const HospitalPortalSuite: React.FC = () => {
         </div>
       )}
 
+      {/* ── Live Verified Red Flag Emergency Alert Banner ─────────────────── */}
+      {activeHospitalEmergencies.length > 0 && (
+        <div className="space-y-4">
+          {activeHospitalEmergencies.map((alert) => (
+            <div
+              key={alert.id}
+              className="bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white rounded-3xl p-5 sm:p-6 shadow-xl border-2 border-red-300 relative overflow-hidden"
+            >
+              <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+                <div className="space-y-2 flex-1">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="px-3 py-1 bg-white text-red-700 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
+                      <Siren className="w-4 h-4 text-red-600 animate-pulse" />
+                      <span>🚨 Incoming Red Flag Emergency Alert</span>
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-black/40 text-yellow-300 border border-yellow-300/40 rounded-md text-xs font-mono font-black uppercase tracking-wider">
+                      Severity: {alert.severity || 'CRITICAL'}
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-black/25 text-white/90 rounded-md text-xs font-mono">
+                      Status: {alert.status}
+                    </span>
+                    <span className="px-2.5 py-0.5 bg-black/25 text-white/90 rounded-md text-xs font-mono">
+                      Hospital: {alert.hospitalName || currentHospitalName}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 text-xs">
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Patient ID:</span>
+                      <span className="font-mono font-black text-sm text-yellow-300 block">{alert.patientId}</span>
+                      <span className="block text-white/85 text-[11px] truncate font-medium">{alert.patientName}</span>
+                    </div>
+
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Case ID:</span>
+                      <span className="font-mono font-black text-sm text-white block truncate">{alert.caseId || alert.sessionId || 'N/A'}</span>
+                      <span className="block text-white/85 text-[11px]">Intake Session Reference</span>
+                    </div>
+
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Timestamp:</span>
+                      <span className="font-mono text-white text-xs block font-bold">
+                        {new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className="text-white/75 text-[10px]">
+                        {new Date(alert.timestamp).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <div className="bg-black/25 p-3 rounded-2xl border border-white/10">
+                      <span className="text-white/70 block text-[10px] uppercase font-bold tracking-wider">Live / Current Location:</span>
+                      <div className="flex items-center gap-1.5 text-white font-semibold">
+                        <MapPin className="w-3.5 h-3.5 text-yellow-300 flex-shrink-0" />
+                        <span className="truncate text-xs">
+                          {alert.liveLocation?.address || alert.liveLocation?.city || 'Live GPS Telemetry'}
+                        </span>
+                      </div>
+                      {alert.liveLocation?.lat && alert.liveLocation?.lng && (
+                        <span className="font-mono text-[10px] text-yellow-200 block mt-0.5">
+                          📍 {alert.liveLocation.lat.toFixed(4)}°, {alert.liveLocation.lng.toFixed(4)}°
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Red Flag Details */}
+                  <div className="bg-black/35 p-3 rounded-2xl border border-white/15 mt-2 text-xs">
+                    <span className="text-yellow-300 font-bold block mb-1 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-yellow-300" />
+                      <span>Triggered Red-Flag Symptoms &amp; Details:</span>
+                    </span>
+                    <p className="text-white font-medium leading-relaxed">
+                      {alert.redFlagDetails || (alert.redFlags && alert.redFlags.length > 0 ? alert.redFlags.join(', ') : alert.triggerReason) || 'Acute clinical red flag criteria triggered during AI intake.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Emergency Action Buttons */}
+                <div className="flex lg:flex-col items-center gap-2 self-stretch lg:self-center justify-end">
+                  <button
+                    onClick={() => {
+                      setActivePortalTab('QUEUE');
+                    }}
+                    className="px-4 py-2.5 bg-rose-900 hover:bg-rose-950 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 flex-1 lg:flex-initial justify-center cursor-pointer"
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>Pre-Arrival Queue</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const cleanPatId = alert.patientId;
+                      setPatientIdInput(cleanPatId);
+                      setActivePortalTab('RECEPTION');
+                      handleVerifyPatient(cleanPatId, true);
+                    }}
+                    className="px-4 py-2.5 bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 flex-1 lg:flex-initial justify-center cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Verify Patient File</span>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const updated = { ...alert, status: 'ACKNOWLEDGED' as const };
+                      db.saveEmergencyAlert(updated);
+                      await cloudDb.saveEmergencyAlert(updated);
+                      try {
+                        await fetch('/api/emergencies', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: alert.id, status: 'ACKNOWLEDGED' })
+                        });
+                      } catch {}
+                      fetchActiveHospitalEmergencies();
+                      showToast('Acknowledged', `Emergency alert for patient ${alert.patientId} acknowledged by ER team.`, 'TRIAGE');
+                    }}
+                    className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 flex-1 lg:flex-initial justify-center cursor-pointer"
+                  >
+                    <span>Acknowledge</span>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const updated = { ...alert, status: 'RESOLVED' as const, resolvedAt: new Date().toISOString() };
+                      db.saveEmergencyAlert(updated);
+                      await cloudDb.saveEmergencyAlert(updated);
+                      try {
+                        await fetch('/api/emergencies', {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: alert.id, status: 'RESOLVED', resolvedAt: updated.resolvedAt })
+                        });
+                      } catch {}
+                      fetchActiveHospitalEmergencies();
+                      showToast('Resolved', `Emergency alert marked as resolved.`, 'INFO');
+                    }}
+                    className="px-3 py-2 bg-black/40 hover:bg-black/60 text-white/80 hover:text-white text-xs rounded-xl transition flex items-center gap-1 justify-center cursor-pointer"
+                  >
+                    <span>Dismiss</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Inbound OPD Appointment Notification Alert ────────────────────── */}
+      {latestInboundAppointment && (
+        <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-teal-700 text-white rounded-3xl p-5 sm:p-6 shadow-xl border-2 border-blue-300 relative overflow-hidden animate-fadeIn">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div className="space-y-1.5 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-3 py-1 bg-white text-blue-900 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
+                  <Calendar className="w-4 h-4 text-blue-700" />
+                  <span>📅 Inbound OPD Appointment Confirmed</span>
+                </span>
+                <span className="px-2.5 py-0.5 bg-black/30 text-white rounded-md text-xs font-mono font-bold">
+                  Token #{latestInboundAppointment.id.slice(-4)}
+                </span>
+                <span className="px-2.5 py-0.5 bg-emerald-400/30 text-emerald-200 border border-emerald-300/40 rounded-md text-xs font-bold uppercase">
+                  {latestInboundAppointment.status}
+                </span>
+              </div>
+              <h4 className="text-base sm:text-lg font-black text-white">
+                Patient: {latestInboundAppointment.patientName} ({latestInboundAppointment.patientId})
+              </h4>
+              <p className="text-xs text-blue-100">
+                Scheduled with <strong>{latestInboundAppointment.doctorName || 'Duty Specialist'}</strong> • Department: <strong>{latestInboundAppointment.departmentName}</strong> • Slot: <strong>{latestInboundAppointment.date} at {latestInboundAppointment.timeSlot}</strong>
+              </p>
+              {latestInboundAppointment.notes && (
+                <p className="text-xs text-white/90 italic bg-black/20 p-2 rounded-xl border border-white/10 mt-1">
+                  Reason/Notes: {latestInboundAppointment.notes}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2 self-stretch lg:self-center justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePortalTab('APPOINTMENTS');
+                  handleViewAppointmentDossier(latestInboundAppointment);
+                }}
+                className="px-4 py-2.5 bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Eye className="w-4 h-4" />
+                <span>View Patient Info &amp; Medical Reports</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLatestInboundAppointment(null)}
+                className="px-3 py-2 bg-black/30 hover:bg-black/50 text-white/80 hover:text-white rounded-xl text-xs transition cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Sub-Navigation Tabs ───────────────────────────────────────────── */}
       <div className="flex overflow-x-auto gap-2 bg-slate-100 p-2 rounded-2xl border border-slate-200">
         {[
+          { id: 'QUEUE', label: 'Incoming Pre-Arrival Queue', icon: Users },
+          { id: 'APPOINTMENTS', label: `OPD Appointments & Patient Records (${appointments.length})`, icon: Calendar },
           { id: 'RECEPTION', label: 'Patient Unique ID & Fast-Track Desk', icon: Search },
           { id: 'BEDS', label: 'Live Bed & ICU Capacity Allocator', icon: Bed },
           { id: 'ROSTER', label: 'Physicians & Specialist Roster', icon: Stethoscope },
@@ -552,6 +1095,232 @@ export const HospitalPortalSuite: React.FC = () => {
       </div>
 
       {/* =================================================================== */}
+      {/* TAB 0: PRE-ARRIVAL INTAKE QUEUE                                     */}
+      {/* =================================================================== */}
+      {activePortalTab === 'QUEUE' && (
+        <div className="space-y-6 animate-fadeIn">
+          <PreArrivalQueue
+            onSelectSession={(session) => {
+              setViewingSession(session);
+            }}
+            selectedSessionId={viewingSession?.id}
+          />
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* TAB: OPD APPOINTMENTS & PATIENT DOSSIERS                            */}
+      {/* =================================================================== */}
+      {activePortalTab === 'APPOINTMENTS' && (
+        <div className="space-y-6 animate-fadeIn">
+          {/* Header Stats & Filter Controls */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-6 h-6 text-teal-600" />
+                  <h3 className="font-extrabold text-slate-900 text-lg sm:text-xl">
+                    Outpatient Department (OPD) Appointments
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Manage patient appointments, scheduled consultations by specialty domain and doctor, and inspect full patient demographics and previous medical reports.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={fetchHospitalAppointments}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh Appointments</span>
+              </button>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-4 bg-teal-50 border border-teal-200 rounded-2xl">
+                <span className="text-[10px] text-teal-700 font-bold uppercase tracking-wider block">Total Booked</span>
+                <span className="text-2xl font-black text-teal-950 mt-1 block">{appointments.length}</span>
+              </div>
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl">
+                <span className="text-[10px] text-blue-700 font-bold uppercase tracking-wider block">Confirmed</span>
+                <span className="text-2xl font-black text-blue-950 mt-1 block">
+                  {appointments.filter(a => a.status === 'CONFIRMED').length}
+                </span>
+              </div>
+              <div className="p-4 bg-purple-50 border border-purple-200 rounded-2xl">
+                <span className="text-[10px] text-purple-700 font-bold uppercase tracking-wider block">In Consultation</span>
+                <span className="text-2xl font-black text-purple-950 mt-1 block">
+                  {appointments.filter(a => a.status === 'IN_CONSULTATION').length}
+                </span>
+              </div>
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl">
+                <span className="text-[10px] text-emerald-700 font-bold uppercase tracking-wider block">Completed</span>
+                <span className="text-2xl font-black text-emerald-950 mt-1 block">
+                  {appointments.filter(a => a.status === 'COMPLETED').length}
+                </span>
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-col sm:flex-row gap-3 pt-2 border-t border-slate-100">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={aptSearchQuery}
+                  onChange={e => setAptSearchQuery(e.target.value)}
+                  placeholder="Search patient name, ID, or doctor..."
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-teal-500 font-medium"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={aptStatusFilter}
+                  onChange={e => setAptStatusFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-700 font-bold focus:outline-none focus:border-teal-500"
+                >
+                  <option value="ALL">All Statuses</option>
+                  <option value="CONFIRMED">Confirmed</option>
+                  <option value="CHECKED_IN">Checked In</option>
+                  <option value="IN_CONSULTATION">In Consultation</option>
+                  <option value="COMPLETED">Completed</option>
+                  <option value="CANCELLED">Cancelled</option>
+                </select>
+
+                <select
+                  value={aptDoctorFilter}
+                  onChange={e => setAptDoctorFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-700 font-bold focus:outline-none focus:border-teal-500"
+                >
+                  <option value="ALL">All Specialists &amp; Doctors</option>
+                  {Array.from(new Set(appointments.map(a => a.doctorName).filter(Boolean))).map((docName, idx) => (
+                    <option key={idx} value={docName!}>{docName}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Appointment Cards List */}
+          {filteredHospitalAppointments.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center text-slate-400 space-y-3">
+              <Calendar className="w-12 h-12 text-slate-300 mx-auto" />
+              <h4 className="font-bold text-slate-700 text-sm">No Appointments Found</h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                No patient OPD appointments match your active filter criteria. When patients book through the patient portal, new appointments will arrive here immediately.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {filteredHospitalAppointments.map(appt => (
+                <div
+                  key={appt.id}
+                  className="bg-white border border-slate-200 hover:border-teal-400 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4 transition"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded font-mono">
+                          TOKEN #{appt.id.slice(-4)}
+                        </span>
+                        <span className="text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded-full">
+                          {appt.departmentName}
+                        </span>
+                      </div>
+                      <h4 className="font-extrabold text-slate-900 text-base">
+                        {appt.patientName}
+                      </h4>
+                      <p className="text-xs text-slate-500 font-mono mt-0.5">
+                        Patient ID: <strong className="text-slate-800">{appt.patientId}</strong>
+                      </p>
+                    </div>
+
+                    <span
+                      className={`text-xs px-2.5 py-1 rounded-xl font-bold uppercase border ${
+                        appt.status === 'CONFIRMED'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : appt.status === 'CHECKED_IN'
+                          ? 'bg-blue-50 text-blue-800 border-blue-200'
+                          : appt.status === 'IN_CONSULTATION'
+                          ? 'bg-purple-50 text-purple-800 border-purple-200 animate-pulse'
+                          : appt.status === 'COMPLETED'
+                          ? 'bg-slate-100 text-slate-700 border-slate-300'
+                          : 'bg-red-50 text-red-700 border-red-200'
+                      }`}
+                    >
+                      {appt.status.replace(/_/g, ' ')}
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-1 text-xs">
+                    <div className="flex items-center justify-between text-slate-700 font-semibold">
+                      <span>Attending Doctor: <strong>{appt.doctorName || 'Assigned Specialist'}</strong></span>
+                      <span className="font-mono text-teal-700 font-bold">{appt.timeSlot}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-slate-500 text-[11px]">
+                      <span>Clinical Domain: {appt.departmentName}</span>
+                      <span>Date: {appt.date}</span>
+                    </div>
+                    {appt.notes && (
+                      <p className="text-[11px] text-slate-600 italic pt-1 border-t border-slate-200/60 mt-1">
+                        Reason: {appt.notes}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Primary Dossier Button & Status Controls */}
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => handleViewAppointmentDossier(appt)}
+                      className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>📂 View Patient Info &amp; Medical Reports</span>
+                    </button>
+
+                    {appt.status === 'CONFIRMED' && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateAppointmentStatus(appt.id, 'CHECKED_IN')}
+                        className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                      >
+                        Check In
+                      </button>
+                    )}
+
+                    {appt.status === 'CHECKED_IN' && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateAppointmentStatus(appt.id, 'IN_CONSULTATION')}
+                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                      >
+                        Start Consultation
+                      </button>
+                    )}
+
+                    {appt.status === 'IN_CONSULTATION' && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateAppointmentStatus(appt.id, 'COMPLETED')}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                      >
+                        Mark Completed
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =================================================================== */}
       {/* TAB 1: RECEPTION & UNIQUE ID VERIFICATION DESK                      */}
       {/* =================================================================== */}
       {activePortalTab === 'RECEPTION' && (
@@ -570,48 +1339,7 @@ export const HospitalPortalSuite: React.FC = () => {
               </p>
             </div>
 
-            {/* Mode Switcher: Search by Patient ID vs Scan Patient QR */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIntakeLookupMode('ID')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  intakeLookupMode === 'ID'
-                    ? 'bg-teal-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900 bg-slate-100'
-                }`}
-              >
-                <Search className="w-3.5 h-3.5" />
-                <span>Search by Patient ID</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIntakeLookupMode('QR')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                  intakeLookupMode === 'QR'
-                    ? 'bg-teal-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900 bg-slate-100'
-                }`}
-              >
-                <QrCode className="w-3.5 h-3.5" />
-                <span>Scan Patient QR</span>
-              </button>
-            </div>
-
-            {intakeLookupMode === 'QR' ? (
-              <div className="pt-2">
-                <PatientQrScanner
-                  onPatientLoaded={(patient) => {
-                    setPatientIdInput(patient.patientId);
-                    handleVerifyPatient(patient.patientId);
-                    setIntakeLookupMode('ID');
-                  }}
-                />
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-col sm:flex-row gap-3 max-w-2xl">
+            <div className="flex flex-col sm:flex-row gap-3 max-w-2xl">
               <input
                 type="text"
                 value={patientIdInput}
@@ -662,8 +1390,6 @@ export const HospitalPortalSuite: React.FC = () => {
               <div className="text-xs text-slate-500 bg-slate-50 border border-dashed border-slate-200 p-2.5 rounded-xl">
                 ℹ️ No registered patients found yet. Register an account in the Patient Portal to verify records here.
               </div>
-            )}
-              </>
             )}
           </div>
 
@@ -737,11 +1463,21 @@ export const HospitalPortalSuite: React.FC = () => {
 
                 <button
                   type="button"
+                  disabled={isRequestingAccess}
                   onClick={() => handleRequestAccess(verifiedPatient.profile!)}
-                  className="px-5 py-3 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-teal-600/20 transition flex items-center gap-2 cursor-pointer"
+                  className="px-5 py-3 bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white font-extrabold text-xs rounded-xl shadow-md shadow-teal-600/20 transition flex items-center gap-2 cursor-pointer"
                 >
-                  <Send className="w-4 h-4" />
-                  <span>REQUEST ACCESS FROM PATIENT</span>
+                  {isRequestingAccess ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>DISPATCHING REQUEST...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>REQUEST ACCESS FROM PATIENT</span>
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -1136,8 +1872,21 @@ export const HospitalPortalSuite: React.FC = () => {
                           </button>
 
                           <a
-                            href={d.downloadUrl || `/api/documents?id=${d.id}&download=true`}
+                            href={d.downloadUrl?.includes('hospitalId=') ? d.downloadUrl : `${d.downloadUrl || `/api/documents?id=${d.id}&download=true`}&hospitalId=${encodeURIComponent(currentHospitalId)}`}
                             download={d.fileName}
+                            onClick={(e) => {
+                              if (d.fileData && typeof d.fileData === 'string' && d.fileData.startsWith('data:')) {
+                                e.preventDefault();
+                                try {
+                                  const link = window.document.createElement('a');
+                                  link.href = d.fileData;
+                                  link.download = d.fileName;
+                                  window.document.body.appendChild(link);
+                                  link.click();
+                                  window.document.body.removeChild(link);
+                                } catch {}
+                              }
+                            }}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg bg-white hover:bg-slate-100 text-slate-700 transition border border-slate-300 cursor-pointer"
@@ -1465,6 +2214,7 @@ export const HospitalPortalSuite: React.FC = () => {
         isOpen={!!viewingDoc}
         document={viewingDoc}
         onClose={() => setViewingDoc(null)}
+        hospitalId={currentHospitalId}
       />
 
       {/* Complete Clinical Report History Dossier Modal */}
@@ -1485,13 +2235,38 @@ export const HospitalPortalSuite: React.FC = () => {
                   Age: {viewingSession.patientAge || '—'} • Gender: {viewingSession.patientGender || '—'} • Phone: {viewingSession.patientPhone || '—'}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className={`text-xs font-black uppercase px-3 py-1 rounded-full border ${
                   viewingSession.triagePriority === 'RED' ? 'bg-red-100 text-red-800 border-red-300' :
                   viewingSession.triagePriority === 'ORANGE' ? 'bg-amber-100 text-amber-800 border-amber-300' :
                   'bg-teal-100 text-teal-800 border-teal-300'
                 }`}>
-                  Triage Priority: {viewingSession.triagePriority}
+                  Triage: {viewingSession.triagePriority}
+                </span>
+
+                <span className={`text-xs font-bold px-3 py-1 rounded-full border flex items-center gap-1 ${
+                  viewingSession.verificationStatus === 'APPROVED'
+                    ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                    : viewingSession.verificationStatus === 'UNAPPROVED'
+                    ? 'bg-red-100 text-red-800 border-red-300'
+                    : 'bg-amber-100 text-amber-800 border-amber-300'
+                }`}>
+                  {viewingSession.verificationStatus === 'APPROVED' ? (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Approved by Doctor</span>
+                    </>
+                  ) : viewingSession.verificationStatus === 'UNAPPROVED' ? (
+                    <>
+                      <XCircle className="w-3.5 h-3.5 text-red-600" />
+                      <span>Unapproved by Doctor</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Pending Doctor Review</span>
+                    </>
+                  )}
                 </span>
               </div>
             </div>
@@ -1554,14 +2329,475 @@ export const HospitalPortalSuite: React.FC = () => {
               </div>
             )}
 
-            <div className="pt-2 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setViewingSession(null)}
-                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition border border-slate-300"
-              >
-                Close Report
-              </button>
+            {/* AI Recommended Medicines with Live Status */}
+            {((viewingSession.recommendedMedicines && viewingSession.recommendedMedicines.length > 0) || (viewingSession.shortReport?.recommendedMedicines && viewingSession.shortReport.recommendedMedicines.length > 0)) && (
+              <div className="p-4 bg-teal-50/70 border border-teal-200 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-xs font-extrabold text-teal-950 uppercase tracking-wider flex items-center gap-1.5">
+                    <Pill className="w-4 h-4 text-teal-600" />
+                    <span>AI Recommended Medicines &amp; Dosages</span>
+                  </h5>
+                  <span className="text-[10px] font-bold bg-white text-teal-800 border border-teal-200 px-2 py-0.5 rounded-full">
+                    Physician Review Required
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {(viewingSession.recommendedMedicines || viewingSession.shortReport?.recommendedMedicines || []).map((med, idx) => (
+                    <div key={idx} className="p-3 bg-white rounded-xl border border-teal-100 shadow-2xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <strong className="text-xs text-slate-900">{med.name}</strong>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          med.status === 'APPROVED' || viewingSession.verificationStatus === 'APPROVED'
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                            : med.status === 'UNAPPROVED' || viewingSession.verificationStatus === 'UNAPPROVED'
+                            ? 'bg-red-100 text-red-800 border-red-300'
+                            : 'bg-amber-100 text-amber-800 border-amber-300'
+                        }`}>
+                          {med.status === 'APPROVED' || viewingSession.verificationStatus === 'APPROVED' ? '✅ Approved' : med.status === 'UNAPPROVED' || viewingSession.verificationStatus === 'UNAPPROVED' ? '❌ Unapproved' : '⏳ Pending'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-600 flex justify-between">
+                        <span>{med.dosage || 'As directed'}</span>
+                        <span className="text-slate-400 font-mono">{med.timing || 'After meals'}</span>
+                      </div>
+                      {med.warnings && (
+                        <p className="text-[10px] text-amber-800 bg-amber-50 p-1 rounded border border-amber-200">
+                          ⚠️ {med.warnings}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Doctor Verification Actions (Approve / Unapprove) */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-teal-600" />
+                  <span className="text-xs font-bold text-slate-900">
+                    Attending Physician Verification • Dr. Vikram Malhotra ({currentHospitalName})
+                  </span>
+                </div>
+                <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase border ${
+                  viewingSession.verificationStatus === 'APPROVED'
+                    ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                    : viewingSession.verificationStatus === 'UNAPPROVED'
+                    ? 'bg-red-100 text-red-800 border-red-300'
+                    : 'bg-amber-100 text-amber-800 border-amber-300'
+                }`}>
+                  Status: {viewingSession.verificationStatus || 'PENDING_PHYSICIAN_REVIEW'}
+                </span>
+              </div>
+
+              {viewingSession.doctorVerificationNotes && (
+                <div className="p-2.5 bg-white rounded-xl border border-slate-200 text-xs text-slate-700">
+                  <strong className="text-slate-900 block mb-0.5">Doctor Verification Notes:</strong>
+                  {viewingSession.doctorVerificationNotes}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-slate-200">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const updated: ClinicalSession = {
+                        ...viewingSession,
+                        status: 'UNAPPROVED',
+                        verificationStatus: 'UNAPPROVED',
+                        verifiedByDoctorId: 'doc-vikram',
+                        verifiedByDoctorName: 'Dr. Vikram Malhotra',
+                        doctorVerificationNotes: 'Unapproved by physician. In-person clinical assessment required before starting medicines.',
+                        verifiedAt: new Date().toISOString(),
+                        recommendedMedicines: (viewingSession.recommendedMedicines || []).map(m => ({ ...m, status: 'UNAPPROVED' as const }))
+                      };
+                      db.saveClinicalSession(updated);
+                      await AIIntakeEngine.saveSessionToCloud(updated);
+                      try {
+                        await fetch('/api/patients', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'save_session', session: updated })
+                        });
+                      } catch {}
+                      syncRelay.publish('clinical_session_updated', updated);
+                      syncRelay.publish(`patient_session_update_${updated.patientId}`, updated);
+                      syncRelay.publish('medibridge_db_update', { type: 'clinical_sessions', data: updated });
+                      setViewingSession(updated);
+                      showToast('Intake Unapproved', 'Marked UNAPPROVED. Patient notified on dashboard.', 'TRIAGE');
+                    }}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>UNAPPROVE</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const updated: ClinicalSession = {
+                        ...viewingSession,
+                        status: 'APPROVED',
+                        verificationStatus: 'APPROVED',
+                        verifiedByDoctorId: 'doc-vikram',
+                        verifiedByDoctorName: 'Dr. Vikram Malhotra',
+                        doctorVerificationNotes: 'Approved after clinical review. Regimen validated for patient safe use.',
+                        verifiedAt: new Date().toISOString(),
+                        recommendedMedicines: (viewingSession.recommendedMedicines || []).map(m => ({ ...m, status: 'APPROVED' as const }))
+                      };
+                      db.saveClinicalSession(updated);
+                      await AIIntakeEngine.saveSessionToCloud(updated);
+                      try {
+                        await fetch('/api/patients', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'save_session', session: updated })
+                        });
+                      } catch {}
+                      syncRelay.publish('clinical_session_updated', updated);
+                      syncRelay.publish(`patient_session_update_${updated.patientId}`, updated);
+                      syncRelay.publish('medibridge_db_update', { type: 'clinical_sessions', data: updated });
+                      setViewingSession(updated);
+                      showToast('Intake & Medicines Approved', 'Report APPROVED by Dr. Vikram Malhotra. Live on Patient Dashboard!', 'VERIFICATION');
+                    }}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>APPROVE REPORT &amp; MEDICINES</span>
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setViewingSession(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold transition"
+                >
+                  Close Report
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Patient Personal Info & Previous Medical Reports Dossier Modal */}
+      {selectedAppointmentForDossier && (
+        <Modal
+          isOpen={!!selectedAppointmentForDossier}
+          onClose={() => setSelectedAppointmentForDossier(null)}
+          title={`Patient Record Dossier: ${selectedAppointmentForDossier.patient?.fullName || selectedAppointmentForDossier.appointment.patientName}`}
+          subtitle={`Patient ID: ${selectedAppointmentForDossier.patient?.patientId || selectedAppointmentForDossier.appointment.patientId} • OPD Token #${selectedAppointmentForDossier.appointment.id.slice(-4)}`}
+          maxWidth="4xl"
+        >
+          <div className="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
+            {/* Appointment Consultation Summary Banner */}
+            <div className="bg-gradient-to-r from-teal-900 to-slate-900 text-white p-5 rounded-2xl border border-teal-700/50 shadow-sm space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-teal-400/20 text-teal-300 border border-teal-400/30 text-xs font-bold uppercase">
+                    Scheduled Consultation
+                  </span>
+                  <span className="text-xs text-slate-300 font-mono">
+                    {selectedAppointmentForDossier.appointment.date} • {selectedAppointmentForDossier.appointment.timeSlot}
+                  </span>
+                </div>
+                <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase border ${
+                  selectedAppointmentForDossier.appointment.status === 'CONFIRMED'
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    : selectedAppointmentForDossier.appointment.status === 'IN_CONSULTATION'
+                    ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                    : 'bg-white/10 text-white border-white/20'
+                }`}>
+                  Status: {selectedAppointmentForDossier.appointment.status}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 text-xs">
+                <div>
+                  <span className="text-teal-200/80 block text-[10px] uppercase font-bold">Assigned Specialist &amp; Domain:</span>
+                  <span className="font-bold text-sm text-white">{selectedAppointmentForDossier.appointment.doctorName || 'Specialist Physician'}</span>
+                  <span className="text-teal-300 block text-[11px] font-semibold">{selectedAppointmentForDossier.appointment.departmentName}</span>
+                </div>
+                <div>
+                  <span className="text-teal-200/80 block text-[10px] uppercase font-bold">Patient's Reason / Chief Complaint:</span>
+                  <span className="font-medium text-white italic">{selectedAppointmentForDossier.appointment.notes || 'Outpatient Consultation'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 1: Patient Personal Information */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                <User className="w-5 h-5 text-teal-600" />
+                <h4 className="font-extrabold text-slate-900 text-sm sm:text-base">
+                  Patient Personal Information &amp; Demographics
+                </h4>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Full Name</span>
+                  <span className="font-extrabold text-slate-900 text-sm mt-0.5 block">
+                    {selectedAppointmentForDossier.patient?.fullName || selectedAppointmentForDossier.appointment.patientName}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Patient Unique ID</span>
+                  <span className="font-mono font-extrabold text-teal-700 text-sm mt-0.5 block">
+                    {selectedAppointmentForDossier.patient?.patientId || selectedAppointmentForDossier.appointment.patientId}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">ABHA Address</span>
+                  <span className="font-mono font-bold text-slate-800 text-xs mt-0.5 block truncate">
+                    {selectedAppointmentForDossier.patient?.abhaAddress || `${(selectedAppointmentForDossier.patient?.patientId || 'patient').toLowerCase()}@abdm`}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Age / Gender</span>
+                  <span className="font-bold text-slate-800 text-xs mt-0.5 block">
+                    {selectedAppointmentForDossier.patient?.age || 34} Yrs • {selectedAppointmentForDossier.patient?.gender || 'MALE'}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Blood Group</span>
+                  <span className="font-extrabold text-rose-700 text-xs mt-0.5 block">
+                    {selectedAppointmentForDossier.patient?.bloodGroup || 'O+'}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Phone Number</span>
+                  <span className="font-mono font-bold text-slate-800 text-xs mt-0.5 block">
+                    {selectedAppointmentForDossier.patient?.phone || '+91 98201 23456'}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Email Address</span>
+                  <span className="font-bold text-slate-800 text-xs mt-0.5 block truncate">
+                    {selectedAppointmentForDossier.patient?.email || 'patient@medibridge.ai'}
+                  </span>
+                </div>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold">Emergency Contact</span>
+                  <span className="font-bold text-slate-800 text-xs mt-0.5 block truncate">
+                    {selectedAppointmentForDossier.patient?.emergencyContactName || 'Priya Sharma'} ({selectedAppointmentForDossier.patient?.emergencyContactPhone || '+91 98201 99887'})
+                  </span>
+                </div>
+              </div>
+
+              {/* Address */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs">
+                <span className="text-slate-400 block text-[10px] uppercase font-bold">Residential Address</span>
+                <span className="text-slate-800 font-medium mt-0.5 block">
+                  {selectedAppointmentForDossier.patient?.address || 'Flat 402, Green Meadows, Senapati Bapat Road, Pune, Maharashtra 411016'}
+                </span>
+              </div>
+
+              {/* Clinical Triad: Allergies, Chronic Conditions, Medications */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <div className="p-3 bg-red-50/70 border border-red-200 rounded-xl space-y-1.5">
+                  <span className="text-[10px] uppercase font-extrabold text-red-900 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                    <span>Known Drug Allergies</span>
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedAppointmentForDossier.patient?.allergies && selectedAppointmentForDossier.patient.allergies.length > 0 ? (
+                      selectedAppointmentForDossier.patient.allergies.map((all, i) => (
+                        <span key={i} className="text-xs bg-white text-red-800 border border-red-300 font-bold px-2 py-0.5 rounded-md shadow-xs">
+                          ⚠️ {all}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500 italic">No known drug allergies</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl space-y-1.5">
+                  <span className="text-[10px] uppercase font-extrabold text-amber-900 flex items-center gap-1">
+                    <HeartPulse className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Chronic Illnesses</span>
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedAppointmentForDossier.patient?.chronicConditions && selectedAppointmentForDossier.patient.chronicConditions.length > 0 ? (
+                      selectedAppointmentForDossier.patient.chronicConditions.map((cond, i) => (
+                        <span key={i} className="text-xs bg-white text-amber-800 border border-amber-300 font-bold px-2 py-0.5 rounded-md shadow-xs">
+                          {cond}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500 italic">No chronic conditions</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl space-y-1.5">
+                  <span className="text-[10px] uppercase font-extrabold text-blue-900 flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Current Medications</span>
+                  </span>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedAppointmentForDossier.patient?.currentMedications && selectedAppointmentForDossier.patient.currentMedications.length > 0 ? (
+                      selectedAppointmentForDossier.patient.currentMedications.map((med, i) => (
+                        <span key={i} className="text-xs bg-white text-blue-800 border border-blue-300 font-bold px-2 py-0.5 rounded-md shadow-xs">
+                          💊 {med}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-500 italic">None reported</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 2: Previous Medical Reports & Clinical Documents */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between gap-3 pb-2 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-teal-600" />
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 text-sm sm:text-base">
+                      Patient Previous Medical Reports &amp; Diagnostic Records
+                    </h4>
+                    <p className="text-xs text-slate-500">
+                      All clinical documents, diagnostic lab reports, radiological scans, and prescriptions on file for this patient.
+                    </p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-teal-50 text-teal-800 border border-teal-200 rounded-xl font-bold text-xs">
+                  {selectedAppointmentForDossier.documents.length} Records
+                </span>
+              </div>
+
+              {selectedAppointmentForDossier.documents.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                  <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs font-semibold text-slate-600">No previous medical documents uploaded yet</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Documents uploaded by the patient or external labs will show up here.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {selectedAppointmentForDossier.documents.map((doc, idx) => (
+                    <div
+                      key={doc.id || idx}
+                      className="p-4 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-2xl transition flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-teal-100 text-teal-800 border border-teal-200">
+                            {doc.fileType || 'MEDICAL_RECORD'}
+                          </span>
+                          <span className="text-xs text-slate-400 font-mono">
+                            {new Date(doc.uploadDate || Date.now()).toLocaleDateString()}
+                          </span>
+                          {doc.extractedData?.facilityName && (
+                            <span className="text-xs text-slate-600 font-medium">
+                              • {doc.extractedData.facilityName}
+                            </span>
+                          )}
+                        </div>
+                        <h5 className="font-extrabold text-slate-900 text-sm">
+                          {doc.fileName || `Clinical Report #${idx + 1}`}
+                        </h5>
+                        {doc.extractedData?.physicianName && (
+                          <p className="text-[11px] text-slate-500">
+                            Issuing Physician: {doc.extractedData.physicianName}
+                          </p>
+                        )}
+                        {/* Extracted Biomarkers or Diagnoses badges */}
+                        {doc.extractedData?.extractedLabResults && doc.extractedData.extractedLabResults.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {doc.extractedData.extractedLabResults.slice(0, 3).map((l, i) => (
+                              <span key={i} className="text-[10px] bg-white border border-slate-200 px-2 py-0.5 rounded-md text-slate-700 font-mono font-bold">
+                                {l.testName}: {l.value} {l.unit}
+                              </span>
+                            ))}
+                            {doc.extractedData.extractedLabResults.length > 3 && (
+                              <span className="text-[10px] text-slate-400 font-semibold self-center">
+                                +{doc.extractedData.extractedLabResults.length - 3} more markers
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* View & Download Buttons */}
+                      <div className="flex items-center gap-2 shrink-0 self-stretch sm:self-center">
+                        <button
+                          type="button"
+                          onClick={() => setViewingDoc(doc)}
+                          className="flex-1 sm:flex-initial px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>View Report</span>
+                        </button>
+
+                        <a
+                          href={doc.downloadUrl || doc.fileData || `/api/documents?id=${doc.id}&download=true`}
+                          download={doc.fileName || `medical-report-${doc.id}.pdf`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 sm:flex-initial px-3.5 py-2 bg-white hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download</span>
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Appointment Consultation Status Update Actions */}
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-700">Update Appointment Status:</span>
+                <span className="text-xs font-mono font-bold text-teal-700">{selectedAppointmentForDossier.appointment.status}</span>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {selectedAppointmentForDossier.appointment.status === 'CONFIRMED' && (
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateAppointmentStatus(selectedAppointmentForDossier.appointment.id, 'CHECKED_IN')}
+                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Check In Patient
+                  </button>
+                )}
+
+                {(selectedAppointmentForDossier.appointment.status === 'CONFIRMED' || selectedAppointmentForDossier.appointment.status === 'CHECKED_IN') && (
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateAppointmentStatus(selectedAppointmentForDossier.appointment.id, 'IN_CONSULTATION')}
+                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Start Consultation
+                  </button>
+                )}
+
+                {selectedAppointmentForDossier.appointment.status === 'IN_CONSULTATION' && (
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateAppointmentStatus(selectedAppointmentForDossier.appointment.id, 'COMPLETED')}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                  >
+                    Mark Consultation Completed
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedAppointmentForDossier(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer"
+                >
+                  Close Dossier
+                </button>
+              </div>
             </div>
           </div>
         </Modal>

@@ -6,7 +6,7 @@ import {
   saveDatabase,
   saveEmergencyAlert,
   getEmergencyAlerts
-} from './centralDb';
+} from './_lib/centralDb.js';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -27,7 +27,8 @@ export default async function handler(req: any, res: any) {
   // ─────────────────────────────────────────────────────────────────────────
   if (req.method === 'GET') {
     const patientId = req.query?.patientId || req.query?.id;
-    const list = getEmergencyAlerts(patientId);
+    const hospitalId = req.query?.hospitalId || req.query?.hospital;
+    const list = getEmergencyAlerts(patientId, hospitalId);
 
     return res.status(200).json({
       success: true,

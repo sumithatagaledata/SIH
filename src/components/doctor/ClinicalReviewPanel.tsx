@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import {
   Stethoscope, CheckCircle2, Edit3, XCircle, ShieldCheck,
   Save, AlertTriangle, User, FileText, Pill, HeartPulse, Sparkles,
-  Clock, CheckSquare, HelpCircle, Activity, Globe
+  Clock, CheckSquare, HelpCircle, Activity, Globe, Ban
 } from 'lucide-react';
 import { ClinicalSession, ClinicalHistorySummary, ClinicalSourceTag, PhysicianShortReport } from '../../types';
 import { db } from '../../services/mockDatabase';
 import { AIIntakeEngine } from '../../services/aiIntakeEngine';
+import { syncRelay } from '../../services/firebaseService';
 import { useAuth } from '../../context/AuthContext';
 import { useNotification } from '../../context/NotificationContext';
 import { SafetyAlertBanner } from './SafetyAlertBanner';
@@ -45,7 +46,7 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editedHpi, setEditedHpi] = useState(shortReport?.summary?.text || summary?.historyOfPresentIllness || '');
   const [editedChiefComplaint, setEditedChiefComplaint] = useState(shortReport?.chiefComplaint?.mainReason || summary?.chiefComplaints || '');
-  const [doctorNotes, setDoctorNotes] = useState(shortReport?.doctorNotes?.notes || summary?.doctorVerificationNotes || '');
+  const [doctorNotes, setDoctorNotes] = useState(session.doctorVerificationNotes || shortReport?.doctorNotes?.notes || summary?.doctorVerificationNotes || '');
   const [isVerifying, setIsVerifying] = useState(false);
 
   if (!summary) {
@@ -58,60 +59,74 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
     );
   }
 
-  const handleVerifyRecord = async (actionType: 'APPROVE' | 'EDIT_AND_APPROVE' | 'REJECT') => {
+  const handleVerifyRecord = async (actionType: 'APPROVE' | 'UNAPPROVE' | 'EDIT_AND_APPROVE' | 'REJECT') => {
     setIsVerifying(true);
 
-    const docName = currentUser?.fullName || doctorProfile?.specialization || 'Attending Physician';
-    const regNo = doctorProfile?.registrationNumber || 'ABDM-Verified';
+    const docName = currentUser?.fullName || doctorProfile?.specialization || 'Dr. Vikram Malhotra';
+    const regNo = doctorProfile?.registrationNumber || 'MMC-2018-09281';
 
-    const updatedShortReport: PhysicianShortReport = shortReport ? {
-      ...shortReport,
-      chiefComplaint: isEditing ? {
-        mainReason: editedChiefComplaint,
-        source: 'DOCTOR ENTERED'
-      } : shortReport.chiefComplaint,
-      summary: isEditing ? {
-        text: editedHpi,
-        source: 'DOCTOR ENTERED'
-      } : shortReport.summary,
-      doctorNotes: {
-        notes: doctorNotes,
-        source: 'DOCTOR ENTERED'
-      }
-    } : {
+    const finalStatus: 'APPROVED' | 'UNAPPROVED' | 'REJECTED' =
+      actionType === 'APPROVE' || actionType === 'EDIT_AND_APPROVE'
+        ? 'APPROVED'
+        : actionType === 'UNAPPROVE'
+        ? 'UNAPPROVED'
+        : 'REJECTED';
+
+    // Update status of all recommended medicines
+    const currentMeds = session.recommendedMedicines || shortReport?.recommendedMedicines || summary.recommendedMedicines || [];
+    const updatedMeds = currentMeds.map(m => ({
+      ...m,
+      status: finalStatus === 'APPROVED' ? ('APPROVED' as const) : ('UNAPPROVED' as const)
+    }));
+
+    const finalDoctorNotes = doctorNotes || (
+      finalStatus === 'APPROVED'
+        ? 'Approved by attending physician. Patient may proceed with prescribed regimen & supportive care.'
+        : 'Unapproved by physician. In-person clinical examination required before medications.'
+    );
+
+    const updatedShortReport: PhysicianShortReport = {
+      ...(shortReport || {}),
       patientId: session.patientId,
       encounterDate: new Date().toISOString().split('T')[0],
       encounterId: session.encounterId,
       appointmentId: session.appointmentId,
-      chiefComplaint: {
-        mainReason: isEditing ? editedChiefComplaint : summary.chiefComplaints,
-        source: isEditing ? 'DOCTOR ENTERED' : 'PATIENT REPORTED'
-      },
-      symptoms: {
+      chiefComplaint: isEditing ? {
+        mainReason: editedChiefComplaint,
+        source: 'DOCTOR ENTERED'
+      } : (shortReport?.chiefComplaint || {
+        mainReason: summary.chiefComplaints,
+        source: 'PATIENT REPORTED'
+      }),
+      symptoms: shortReport?.symptoms || {
         importantSymptoms: [summary.chiefComplaints],
         source: 'PATIENT REPORTED'
       },
-      medicalHistory: {
+      medicalHistory: shortReport?.medicalHistory || {
         existingConditions: summary.pastMedicalHistory.map(p => p.condition),
         previousHistory: [],
         source: 'PATIENT REPORTED'
       },
-      medicationsAndAllergies: {
+      medicationsAndAllergies: shortReport?.medicationsAndAllergies || {
         currentMedications: summary.currentMedications.map(m => m.name),
         knownAllergies: summary.allergies.map(a => a.allergen),
         source: 'PATIENT REPORTED'
       },
-      relevantFindings: [],
-      summary: {
-        text: isEditing ? editedHpi : summary.historyOfPresentIllness,
-        source: isEditing ? 'DOCTOR ENTERED' : 'AI SUMMARIZED'
-      },
-      missingOrUncertainInfo: {
-        items: ['Physical examination pending'],
+      relevantFindings: shortReport?.relevantFindings || [],
+      recommendedMedicines: updatedMeds,
+      summary: isEditing ? {
+        text: editedHpi,
+        source: 'DOCTOR ENTERED'
+      } : (shortReport?.summary || {
+        text: summary.historyOfPresentIllness,
+        source: 'AI SUMMARIZED'
+      }),
+      missingOrUncertainInfo: shortReport?.missingOrUncertainInfo || {
+        items: ['Physical examination pending in clinic'],
         source: 'AI SUMMARIZED'
       },
       doctorNotes: {
-        notes: doctorNotes,
+        notes: finalDoctorNotes,
         source: 'DOCTOR ENTERED'
       }
     };
@@ -120,14 +135,11 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
       ...summary,
       chiefComplaints: isEditing ? editedChiefComplaint : summary.chiefComplaints,
       historyOfPresentIllness: isEditing ? editedHpi : summary.historyOfPresentIllness,
-      doctorVerificationNotes: doctorNotes,
+      doctorVerificationNotes: finalDoctorNotes,
       shortReport: updatedShortReport,
-      verificationStatus: actionType === 'REJECT'
-        ? 'REJECTED'
-        : actionType === 'EDIT_AND_APPROVE'
-        ? 'EDITED_AND_VERIFIED'
-        : 'VERIFIED_BY_PHYSICIAN',
-      verifiedByDoctorId: currentUser?.id || 'usr-doc',
+      verificationStatus: finalStatus,
+      recommendedMedicines: updatedMeds,
+      verifiedByDoctorId: currentUser?.id || 'doc-vikram',
       verifiedByDoctorName: docName,
       doctorRegistrationNumber: regNo,
       verifiedAt: new Date().toISOString()
@@ -135,13 +147,32 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
 
     const updatedSession: ClinicalSession = {
       ...session,
-      status: actionType === 'REJECT' ? 'IN_PROGRESS' : 'VERIFIED',
+      status: (finalStatus === 'APPROVED' ? 'APPROVED' : 'COMPLETED') as any,
+      verificationStatus: finalStatus,
+      verifiedByDoctorId: currentUser?.id || 'doc-vikram',
+      verifiedByDoctorName: docName,
+      doctorVerificationNotes: finalDoctorNotes,
+      verifiedAt: new Date().toISOString(),
+      recommendedMedicines: updatedMeds,
       shortReport: updatedShortReport,
       aiSummary: updatedSummary
     };
 
     db.saveClinicalSession(updatedSession);
     await AIIntakeEngine.saveSessionToCloud(updatedSession);
+
+    try {
+      await fetch('/api/patients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save_session', session: updatedSession })
+      });
+    } catch {}
+
+    // Dispatch realtime events across all devices & patient dashboard
+    syncRelay.publish('clinical_session_updated', updatedSession);
+    syncRelay.publish(`patient_session_update_${session.patientId}`, updatedSession);
+    syncRelay.publish('medibridge_db_update', { type: 'clinical_sessions', data: updatedSession });
 
     db.logAction(
       currentUser?.id || 'usr-doc',
@@ -150,26 +181,31 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
       'RECORD_VERIFIED',
       'ClinicalSession',
       session.id,
-      `Physician ${actionType}: Verified clinical intake short report for ${session.patientName} (${session.patientId}) under Reg #${regNo}`
+      `Physician set status to ${finalStatus} for ${session.patientName} (${session.patientId}). Notes: ${finalDoctorNotes}`
     );
 
     setIsVerifying(false);
     setIsEditing(false);
     onSessionUpdated(updatedSession);
 
-    if (actionType === 'REJECT') {
-      showToast('Intake Rejected', 'Summary rejected. Patient prompted for clinical retake.', 'TRIAGE');
-    } else {
-      confetti({ particleCount: 60, spread: 70, origin: { y: 0.2 } });
+    if (finalStatus === 'UNAPPROVED') {
       showToast(
-        'Record Verified & Signed',
-        `Clinical intake officially signed by ${docName} (${regNo}).`,
+        'Intake Marked UNAPPROVED',
+        `Marked as UNAPPROVED by ${docName}. Consultation required. Status updated on Patient Dashboard.`,
+        'TRIAGE'
+      );
+    } else {
+      confetti({ particleCount: 70, spread: 80, origin: { y: 0.2 } });
+      showToast(
+        'Intake & Medicines APPROVED',
+        `Report & medicines officially APPROVED by ${docName} (${regNo}). Visible live on Patient Dashboard!`,
         'VERIFICATION'
       );
     }
   };
 
-  const isVerified = summary.verificationStatus === 'VERIFIED_BY_PHYSICIAN' || summary.verificationStatus === 'EDITED_AND_VERIFIED';
+  const isApproved = session.verificationStatus === 'APPROVED' || summary.verificationStatus === 'APPROVED' || summary.verificationStatus === 'VERIFIED_BY_PHYSICIAN' || summary.verificationStatus === 'EDITED_AND_VERIFIED';
+  const isUnapproved = session.verificationStatus === 'UNAPPROVED' || summary.verificationStatus === 'UNAPPROVED' || summary.verificationStatus === 'REJECTED';
 
   // Resolved values from shortReport or summary
   const chiefComplaintText = shortReport?.chiefComplaint?.mainReason || summary.chiefComplaints || 'Patient clinical intake';
@@ -210,16 +246,30 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
         {/* Verification Status Badge */}
         <div className="flex items-center gap-2">
           <span
-            className={`text-xs px-3 py-1.5 rounded-xl font-bold border flex items-center gap-1.5 ${
-              isVerified
-                ? 'bg-teal-50 text-teal-800 border-teal-200'
-                : summary.verificationStatus === 'REJECTED'
-                ? 'bg-red-50 text-red-700 border-red-200'
-                : 'bg-amber-50 text-amber-800 border-amber-200'
+            className={`text-xs px-3.5 py-1.5 rounded-xl font-bold border flex items-center gap-1.5 shadow-xs ${
+              isApproved
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-400/30'
+                : isUnapproved
+                ? 'bg-red-50 text-red-800 border-red-300 ring-1 ring-red-400/30'
+                : 'bg-amber-50 text-amber-900 border-amber-300 ring-1 ring-amber-400/30'
             }`}
           >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>{summary.verificationStatus.replace(/_/g, ' ')}</span>
+            {isApproved ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>APPROVED BY DOCTOR</span>
+              </>
+            ) : isUnapproved ? (
+              <>
+                <XCircle className="w-4 h-4 text-red-600" />
+                <span>UNAPPROVED / CONSULTATION REQUIRED</span>
+              </>
+            ) : (
+              <>
+                <Clock className="w-4 h-4 text-amber-600" />
+                <span>PENDING PHYSICIAN REVIEW</span>
+              </>
+            )}
           </span>
         </div>
       </div>
@@ -371,6 +421,83 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
           )}
         </div>
 
+        {/* AI Recommended Medicines & Clinical Verification Section */}
+        <div className="bg-gradient-to-br from-teal-50/80 via-white to-slate-50 p-5 rounded-2xl border-2 border-teal-200/90 space-y-3.5 shadow-xs">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-teal-600 text-white shadow-xs">
+                <Pill className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black text-teal-950 uppercase tracking-wider flex items-center gap-2">
+                  <span>AI Recommended Medicines &amp; Dosages</span>
+                  <span className="text-[10px] bg-teal-100 text-teal-800 font-bold px-2 py-0.5 rounded-full border border-teal-200">
+                    Physician Verification Required
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Verify or edit dosages, frequency, and safety warnings before giving approval for patient.
+                </p>
+              </div>
+            </div>
+            <SourceBadge source="AI SUMMARIZED" />
+          </div>
+
+          {(!session.recommendedMedicines || session.recommendedMedicines.length === 0) ? (
+            <div className="p-4 bg-white rounded-xl border border-slate-200 text-center text-xs text-slate-500">
+              No specific medications were recommended during this intake.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {session.recommendedMedicines.map((med, idx) => (
+                <div key={idx} className="p-3.5 bg-white rounded-xl border border-slate-200 hover:border-teal-300 transition shadow-2xs space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <h5 className="font-extrabold text-xs text-slate-900 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+                      <span>{med.name}</span>
+                    </h5>
+                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                      med.status === 'APPROVED' || isApproved
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        : med.status === 'UNAPPROVED' || isUnapproved
+                        ? 'bg-red-100 text-red-800 border-red-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                    }`}>
+                      {med.status === 'APPROVED' || isApproved ? '✅ Approved' : med.status === 'UNAPPROVED' || isUnapproved ? '❌ Unapproved' : '⏳ Pending'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 pt-1">
+                    <div>
+                      <span className="text-slate-400 block text-[10px] font-bold uppercase">Dosage:</span>
+                      <strong className="text-slate-800">{med.dosage || 'As directed'}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block text-[10px] font-bold uppercase">Timing:</span>
+                      <strong className="text-slate-800">{med.timing || 'After meals'}</strong>
+                    </div>
+                  </div>
+                  {med.duration && (
+                    <div className="text-[11px] text-slate-600">
+                      <span className="text-slate-400 text-[10px] font-bold uppercase mr-1">Duration:</span>
+                      <span className="font-semibold text-slate-700">{med.duration}</span>
+                    </div>
+                  )}
+                  {med.indication && (
+                    <div className="text-[11px] text-teal-800 bg-teal-50/60 p-1.5 rounded-lg border border-teal-100 font-medium">
+                      <strong>Indication:</strong> {med.indication}
+                    </div>
+                  )}
+                  {med.warnings && (
+                    <div className="text-[10px] text-amber-800 bg-amber-50/70 p-1.5 rounded-lg border border-amber-200">
+                      ⚠️ {med.warnings}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Missing / Uncertain Information */}
         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
           <div className="flex items-center justify-between">
@@ -497,33 +624,41 @@ export const ClinicalReviewPanel: React.FC<ClinicalReviewPanelProps> = ({
         </div>
 
         {/* Verification Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto">
           <button
-            onClick={() => handleVerifyRecord('REJECT')}
+            onClick={() => handleVerifyRecord('UNAPPROVE')}
             disabled={isVerifying}
-            className="px-3.5 py-2 bg-red-50 hover:bg-red-100 disabled:opacity-50 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-red-600/20 cursor-pointer"
           >
             <XCircle className="w-4 h-4" />
-            <span>Reject Intake</span>
+            <span>UNAPPROVE</span>
+          </button>
+
+          <button
+            onClick={() => setIsEditing(!isEditing)}
+            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+          >
+            <Edit3 className="w-4 h-4" />
+            <span>{isEditing ? 'Cancel Edit' : 'Edit Report'}</span>
           </button>
 
           {isEditing ? (
             <button
               onClick={() => handleVerifyRecord('EDIT_AND_APPROVE')}
               disabled={isVerifying}
-              className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-teal-600/20"
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>{isVerifying ? 'Saving...' : 'Save Edits & Sign'}</span>
+              <span>{isVerifying ? 'Saving...' : 'Save & Approve'}</span>
             </button>
           ) : (
             <button
               onClick={() => handleVerifyRecord('APPROVE')}
               disabled={isVerifying}
-              className="px-5 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-teal-600/20"
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isVerifying ? 'Signing...' : 'Verify & Sign Record'}</span>
+              <span>{isVerifying ? 'Approving...' : 'APPROVE'}</span>
             </button>
           )}
         </div>

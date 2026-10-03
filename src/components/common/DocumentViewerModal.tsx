@@ -7,21 +7,43 @@ interface DocumentViewerModalProps {
   document: MedicalDocument | null;
   isOpen: boolean;
   onClose: () => void;
+  hospitalId?: string;
 }
 
 export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   document,
   isOpen,
-  onClose
+  onClose,
+  hospitalId
 }) => {
   if (!document) return null;
 
-  const fileUrl = document.fileUrl || `/api/documents?id=${document.id}`;
-  const downloadUrl = document.downloadUrl || `/api/documents?id=${document.id}&download=true`;
+  const hospitalParam = hospitalId ? `&hospitalId=${encodeURIComponent(hospitalId)}` : '';
+  const fileUrl = document.fileUrl
+    ? (document.fileUrl.includes('hospitalId=') ? document.fileUrl : `${document.fileUrl}${document.fileUrl.includes('?') ? '&' : '?'}hospitalId=${encodeURIComponent(hospitalId || '')}`)
+    : `/api/documents?id=${document.id}${hospitalParam}`;
+  const downloadUrl = document.downloadUrl
+    ? (document.downloadUrl.includes('hospitalId=') ? document.downloadUrl : `${document.downloadUrl}&hospitalId=${encodeURIComponent(hospitalId || '')}`)
+    : `/api/documents?id=${document.id}&download=true${hospitalParam}`;
 
   const fileName = document.fileName || 'medical_document.pdf';
   const isImage = /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(fileName) || document.mimeType?.startsWith('image/');
   const isPdf = /\.pdf$/i.test(fileName) || document.mimeType === 'application/pdf' || document.fileType === 'LAB_REPORT' || document.fileType === 'PRESCRIPTION';
+
+  const handleDownloadClick = (e: React.MouseEvent) => {
+    if (document.fileData && typeof document.fileData === 'string' && document.fileData.startsWith('data:')) {
+      e.preventDefault();
+      try {
+        const link = window.document.createElement('a');
+        link.href = document.fileData;
+        link.download = fileName;
+        window.document.body.appendChild(link);
+        link.click();
+        window.document.body.removeChild(link);
+        return;
+      } catch {}
+    }
+  };
 
   return (
     <Modal
@@ -51,7 +73,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
               href={fileUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+              className="px-3.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
               <span>Open in New Tab</span>
@@ -60,7 +82,8 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
             <a
               href={downloadUrl}
               download={fileName}
-              className="px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm shadow-teal-600/20"
+              onClick={handleDownloadClick}
+              className="px-4 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm shadow-teal-600/20 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Download File</span>
@@ -73,16 +96,16 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
           {isImage ? (
             <div className="flex items-center justify-center p-4 bg-slate-900 min-h-[460px]">
               <img
-                src={fileUrl}
+                src={document.fileData || fileUrl}
                 alt={fileName}
                 className="max-h-[520px] max-w-full object-contain rounded-lg shadow-2xl"
               />
             </div>
           ) : (
             <iframe
-              src={fileUrl}
+              src={document.fileData || fileUrl}
               title={fileName}
-              className="w-full h-[540px] border-0 rounded-2xl bg-white"
+              className="w-full h-[540px] border-0 rounded-2xl bg-white shadow-inner"
             />
           )}
         </div>
@@ -92,7 +115,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
           <span>Patient ID: <strong className="font-mono text-slate-700">{document.patientId}</strong></span>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition"
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition cursor-pointer"
           >
             Close Viewer
           </button>

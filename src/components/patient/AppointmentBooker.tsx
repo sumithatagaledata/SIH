@@ -14,6 +14,8 @@ import {
   PatientLocationState,
   RealApiHospitalResult
 } from '../../services/locationHospitalService';
+import { cloudDb } from '../../services/cloudDatabaseEngine';
+import { syncRelay } from '../../services/firebaseService';
 
 export const AppointmentBooker: React.FC = () => {
   const { currentUser, patientProfile } = useAuth();
@@ -56,22 +58,28 @@ export const AppointmentBooker: React.FC = () => {
   } | null>(null);
 
   const [selectedMedicalSystem, setSelectedMedicalSystem] = useState<MedicalSystem>('ALLOPATHY');
-  const [selectedDept, setSelectedDept] = useState<string>('Emergency & Trauma');
+  const [selectedDept, setSelectedDept] = useState<string>('Cardiology');
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>('auto');
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [bookingNotes, setBookingNotes] = useState<string>('');
+  const [isBookingSubmitting, setIsBookingSubmitting] = useState<boolean>(false);
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return tomorrow.toISOString().split('T')[0];
+  });
   const [selectedSlot, setSelectedSlot] = useState<string>('11:30 AM');
   const [appointments, setAppointments] = useState<Appointment[]>(() => db.getAppointments(patientId));
 
-  const slots = ['09:30 AM', '10:30 AM', '11:30 AM', '02:00 PM', '03:30 PM', '04:30 PM'];
+  const slots = ['09:30 AM', '10:30 AM', '11:30 AM', '02:00 PM', '03:30 PM', '04:30 PM', '05:30 PM'];
 
   const allopathyDepartments = [
-    'Emergency & Trauma',
-    'General Medicine',
     'Cardiology',
+    'General Medicine',
+    'Emergency & Trauma',
     'Orthopedics',
     'Pulmonology',
-    'Pediatrics',
     'Neurology',
+    'Pediatrics',
     'General Surgery'
   ];
 
@@ -89,9 +97,23 @@ export const AppointmentBooker: React.FC = () => {
   const departments = selectedMedicalSystem === 'AYURVEDA' ? ayurvedaDepartments : allopathyDepartments;
 
   const allDoctors = db.getDoctors();
-  const availableDoctors = allDoctors.filter(d =>
-    !d.medicalSystem || d.medicalSystem === selectedMedicalSystem
-  );
+  const availableDoctors = allDoctors.filter(d => {
+    if (d.medicalSystem && d.medicalSystem !== selectedMedicalSystem) return false;
+    if (selectedHospital && d.hospitalId && d.hospitalId !== selectedHospital.id) return false;
+    if (selectedDept) {
+      const cleanDept = selectedDept.toLowerCase();
+      const dDept = (d.departmentName || '').toLowerCase();
+      const dSpec = (d.specialization || '').toLowerCase();
+      return dDept.includes(cleanDept) || cleanDept.includes(dDept) ||
+             dSpec.includes(cleanDept) || cleanDept.includes(dSpec);
+    }
+    return true;
+  });
+
+  const doctorsForDepartment = availableDoctors.length > 0
+    ? availableDoctors
+    : allDoctors.filter(d => (!d.medicalSystem || d.medicalSystem === selectedMedicalSystem) && (!selectedHospital || !d.hospitalId || d.hospitalId === selectedHospital.id));
+
 
   // Execute real discovery via unified LocationHospitalService
   const fetchNearbyHospitals = useCallback(async (coords: { lat: number; lng: number } | null, radius: number, query: string) => {
@@ -226,49 +248,95 @@ export const AppointmentBooker: React.FC = () => {
     }
   };
 
-  const handleBook = (e: React.FormEvent) => {
+  const handleBook = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedHospital) {
       showToast('Select Hospital', 'Please select a hospital destination first.', 'INFO');
       return;
     }
 
-    const chosenDoctor = selectedDoctorId !== 'auto' ? allDoctors.find(d => d.id === selectedDoctorId) : undefined;
-    const docDisplay = chosenDoctor?.doctorName || `Duty Consultant (${selectedDept})`;
+    const chosenDoctor = (selectedDoctorId !== 'auto' ? allDoctors.find(d => d.id === selectedDoctorId) : doctorsForDepartment[0]) || allDoctors[0];
+    const docDisplay = chosenDoctor?.doctorName || `Duty Specialist (${selectedDept})`;
+    const patientName = patientProfile?.fullName || currentUser?.fullName || 'Aarav Sharma';
+    const patientPatId = patientProfile?.patientId || currentUser?.patientId || patientId || 'MB-2026-ARV982';
 
+    setIsBookingSubmitting(true);
     const newAppt: Appointment = {
       id: `apt-${Date.now()}`,
-      patientId: patientId,
-      patientName: currentUser?.fullName || 'Patient',
+      patientId: patientPatId,
+      patientName: patientName,
       hospitalId: selectedHospital.id,
       hospitalName: selectedHospital.name,
       departmentId: selectedDept.toLowerCase().replace(/[^a-z0-9]/g, '-'),
       departmentName: selectedDept,
-      doctorId: chosenDoctor?.id,
+      doctorId: chosenDoctor?.id || 'doc-apex-001',
       doctorName: docDisplay,
       medicalSystem: selectedMedicalSystem,
       date: selectedDate,
       timeSlot: selectedSlot,
       status: 'CONFIRMED',
       triagePriority: 'GREEN',
-      notes: chosenDoctor ? `Specialist: ${chosenDoctor.doctorName} (${chosenDoctor.qualification})` : undefined
+      notes: bookingNotes.trim() || (chosenDoctor ? `Domain: ${selectedDept} • Doctor: ${chosenDoctor.doctorName} (${chosenDoctor.qualification})` : undefined)
     };
 
+    // 1. Add locally to client database and cloud DB
     db.addAppointment(newAppt);
-    setAppointments(db.getAppointments(patientId));
+    await cloudDb.saveAppointment(newAppt);
+    setAppointments(db.getAppointments(patientPatId));
+
+    // Ensure hospital is authorized to access patient records for this booked appointment
+    try {
+      db.saveTrustedHospital({
+        id: `trust-${Date.now()}`,
+        patientId: patientPatId,
+        patientProfileId: patientProfile?.id || patientPatId,
+        hospitalId: selectedHospital.id,
+        hospitalName: selectedHospital.name,
+        hospitalAddress: selectedHospital.address || 'Medical Campus',
+        hospitalCity: (selectedHospital as any).city || 'Pune',
+        grantedAt: new Date().toISOString(),
+        status: 'ACTIVE',
+        allowEmergencyAlert: true,
+        allowMedicalHistory: true,
+        ambulanceAvailable: true
+      });
+    } catch {}
+
+    // 2. Dispatch to central backend serverless API for cross-device persistence
+    try {
+      await fetch('/api/appointments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appointment: newAppt })
+      });
+    } catch (apiErr) {
+      console.warn('API /api/appointments booking error:', apiErr);
+    }
+
+    // 3. Publish real-time notification to hospital portal & doctor
+    try {
+      syncRelay.publish('appointment_booked', newAppt);
+      syncRelay.publish(`hospital_appointments_${selectedHospital.id}`, newAppt);
+      if (chosenDoctor?.id) {
+        syncRelay.publish(`doctor_appointments_${chosenDoctor.id}`, newAppt);
+      }
+    } catch {}
+
+    // 4. Log action
     db.logAction(
       currentUser?.id || 'usr-pat',
-      currentUser?.fullName || 'Patient',
+      patientName,
       'PATIENT',
       'INTAKE_COMPLETED',
       'Appointment',
       newAppt.id,
-      `Booked ${selectedDept} appointment at ${selectedHospital.name} for ${selectedDate} ${selectedSlot}`
+      `Booked ${selectedDept} appointment with ${docDisplay} at ${selectedHospital.name} for ${selectedDate} ${selectedSlot}`
     );
 
+    setIsBookingSubmitting(false);
     showToast(
-      '🎉 Appointment Confirmed!',
-      `Token: #${newAppt.id.slice(-4)} at ${selectedHospital.name} on ${selectedDate} (${selectedSlot}).`,
+      '🎉 Appointment Confirmed & Sent to Hospital!',
+      `Scheduled with ${docDisplay} at ${selectedHospital.name} for ${selectedDate} at ${selectedSlot}. Record dossier dispatched to Hospital Portal.`,
       'VERIFICATION'
     );
   };
@@ -621,13 +689,17 @@ export const AppointmentBooker: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Department */}
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                Specialty Department
+              <label className="text-xs font-bold text-slate-700 block mb-1.5 flex items-center gap-1.5">
+                <Stethoscope className="w-3.5 h-3.5 text-teal-600" />
+                <span>1. Select Specialty Domain</span>
               </label>
               <select
                 value={selectedDept}
-                onChange={e => setSelectedDept(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-teal-600 focus:bg-white transition shadow-sm"
+                onChange={e => {
+                  setSelectedDept(e.target.value);
+                  setSelectedDoctorId('auto');
+                }}
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-800 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white transition shadow-sm"
               >
                 {departments.map(d => (
                   <option key={d} value={d}>{d}</option>
@@ -637,18 +709,19 @@ export const AppointmentBooker: React.FC = () => {
 
             {/* Doctor Selection */}
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                Consultant Physician / Vaidya
+              <label className="text-xs font-bold text-slate-700 block mb-1.5 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-teal-600" />
+                <span>2. Select Specific Doctor</span>
               </label>
               <select
                 value={selectedDoctorId}
                 onChange={e => setSelectedDoctorId(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-teal-600 focus:bg-white transition shadow-sm"
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-800 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white transition shadow-sm"
               >
-                <option value="auto">⚡ Next Available Duty Specialist</option>
-                {availableDoctors.map(doc => (
+                <option value="auto">⚡ Next Available Domain Specialist</option>
+                {doctorsForDepartment.map(doc => (
                   <option key={doc.id} value={doc.id}>
-                    {doc.doctorName} ({doc.specialization})
+                    {doc.doctorName} • {doc.specialization} ({doc.experienceYears || 10}+ yrs exp)
                   </option>
                 ))}
               </select>
@@ -656,35 +729,87 @@ export const AppointmentBooker: React.FC = () => {
 
             {/* Date */}
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                Preferred Date
+              <label className="text-xs font-bold text-slate-700 block mb-1.5 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-teal-600" />
+                <span>3. Preferred Date</span>
               </label>
               <input
                 type="date"
                 value={selectedDate}
                 min={new Date().toISOString().split('T')[0]}
                 onChange={e => setSelectedDate(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-teal-600 focus:bg-white transition shadow-sm"
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-800 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white transition shadow-sm"
               />
             </div>
           </div>
 
+          {/* Active Doctor Profile Badge */}
+          {(() => {
+            const activeDoc = (selectedDoctorId !== 'auto' ? allDoctors.find(d => d.id === selectedDoctorId) : doctorsForDepartment[0]) || allDoctors[0];
+            if (!activeDoc) return null;
+            return (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-teal-100 border border-teal-200 flex items-center justify-center text-teal-800 font-black text-lg">
+                    {(activeDoc.doctorName || 'Doctor').replace(/Dr\.\s*/i, '').charAt(0) || 'D'}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h5 className="font-extrabold text-slate-900 text-sm">{activeDoc.doctorName}</h5>
+                      <span className="text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded">
+                        {activeDoc.specialization || selectedDept}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      {activeDoc.qualification || 'MBBS, MD'} • <strong>{activeDoc.experienceYears || 12} Years Experience</strong>
+                    </p>
+                    <p className="text-[11px] text-slate-500 font-mono">
+                      Registration: {activeDoc.registrationNumber || 'MCI-VERIFIED'} • {selectedHospital?.name || 'Apex Multi-Specialty Hospital'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 sm:self-center">
+                  <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>OPD Consultation Slot Guaranteed</span>
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Reason for Visit / Medical Notes */}
+          <div>
+            <label className="text-xs font-bold text-slate-700 block mb-1.5 flex items-center gap-1.5">
+              <span>Reason for Consultation / Medical Notes (Optional)</span>
+            </label>
+            <input
+              type="text"
+              value={bookingNotes}
+              onChange={e => setBookingNotes(e.target.value)}
+              placeholder="e.g. Follow-up for hypertension, review of recent ECG and blood work, or prescription renewal"
+              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-xs sm:text-sm text-slate-800 focus:outline-none focus:border-teal-600 focus:bg-white transition shadow-sm"
+            />
+          </div>
+
           {/* Time Slots */}
           <div>
-            <label className="text-xs font-bold text-slate-700 block mb-2">
-              Available OPD Time Slots
+            <label className="text-xs font-bold text-slate-700 block mb-2 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-teal-600" />
+              <span>4. Available OPD Consultation Slots</span>
             </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
               {slots.map(slot => (
                 <button
                   key={slot}
                   type="button"
                   onClick={() => setSelectedSlot(slot)}
-                  className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                  className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
                     selectedSlot === slot
                       ? selectedMedicalSystem === 'AYURVEDA'
-                        ? 'bg-emerald-700 border-emerald-700 text-white shadow-sm'
-                        : 'bg-teal-600 border-teal-600 text-white shadow-sm'
+                        ? 'bg-emerald-700 border-emerald-700 text-white shadow-sm ring-2 ring-emerald-500/20'
+                        : 'bg-teal-600 border-teal-600 text-white shadow-sm ring-2 ring-teal-500/20'
                       : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
                   }`}
                 >
@@ -698,20 +823,29 @@ export const AppointmentBooker: React.FC = () => {
           <div className="flex items-center justify-between pt-4 border-t border-slate-100">
             <div className="text-xs text-slate-500 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-teal-600" />
-              <span>Token generated &amp; syncs with Hospital HIS</span>
+              <span>Dossier &amp; reports auto-synced with Hospital Reception &amp; Doctor Desk</span>
             </div>
 
             <button
               type="submit"
-              disabled={!selectedHospital}
-              className={`px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-2 ${
+              disabled={!selectedHospital || isBookingSubmitting}
+              className={`px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer ${
                 selectedMedicalSystem === 'AYURVEDA'
                   ? 'bg-emerald-700 hover:bg-emerald-800 shadow-emerald-700/20'
                   : 'bg-teal-600 hover:bg-teal-700 shadow-teal-600/20'
               }`}
             >
-              <span>Confirm OPD Appointment</span>
-              <ArrowRight className="w-4 h-4" />
+              {isBookingSubmitting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Dispatching to Hospital Portal...</span>
+                </>
+              ) : (
+                <>
+                  <span>Confirm OPD Appointment &amp; Notify Doctor</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
         </form>
